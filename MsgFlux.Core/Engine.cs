@@ -119,7 +119,7 @@ public partial class Engine : BackgroundService
 
         // Link OTel Context
         var parentContext = ExtractContext(envelope.Headers);
-        using var activity = ActivitySource.StartActivity("Flux.Process", ActivityKind.Consumer, parentContext);
+        using var activity = ActivitySource.StartActivity("MsgFlux.Dispatch", ActivityKind.Consumer, parentContext);
 
         var tasks = new List<Task>(consumers.Length);
         foreach (var consumer in consumers)
