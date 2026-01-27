@@ -1,25 +1,25 @@
 # MsgFlux
 
-MsgFlux est une bibliothèque légère de messagerie in-process pour .NET, conçue pour faciliter la communication asynchrone entre composants via un modèle producteur-consommateur. Elle intègre nativement la résilience (via Polly) et l'observabilité (via OpenTelemetry).
+MsgFlux is a lightweight in-process messaging library for .NET, designed to facilitate asynchronous communication between components via a producer-consumer model. It natively integrates resilience (via Polly) and observability (via OpenTelemetry).
 
-## Fonctionnalités
+## Features
 
-*   **Bus de messages in-process** : Communication découplée entre composants.
-*   **Modèle Pub/Sub** : Publication de messages et consommation via des gestionnaires typés.
-*   **Résilience intégrée** : Utilisation de [Polly](https://github.com/App-vNext/Polly) pour la gestion des retries (tentatives automatiques en cas d'échec).
-*   **Observabilité** : Support d'OpenTelemetry (ActivitySource "MsgFlux") pour le traçage distribué.
-*   **Injection de dépendances** : Intégration transparente avec `Microsoft.Extensions.DependencyInjection`.
-*   **Traitement asynchrone** : Utilisation de `System.Threading.Channels` pour un traitement efficace et non bloquant.
+*   **In-process message bus**: Decoupled communication between components.
+*   **Pub/Sub Model**: Message publication and consumption via typed handlers.
+*   **Built-in Resilience**: Uses [Polly](https://github.com/App-vNext/Polly) for retry management (automatic retries on failure).
+*   **Observability**: OpenTelemetry support (ActivitySource "MsgFlux") for distributed tracing.
+*   **Dependency Injection**: Seamless integration with `Microsoft.Extensions.DependencyInjection`.
+*   **Asynchronous Processing**: Uses `System.Threading.Channels` for efficient, non-blocking processing.
 
 ## Installation
 
-(À compléter avec les instructions d'installation spécifiques, ex: via NuGet si publié)
+(To be completed with specific installation instructions, e.g., via NuGet if published)
 
-## Utilisation
+## Usage
 
 ### 1. Configuration
 
-Ajoutez MsgFlux à votre conteneur de services dans `Program.cs` ou `Startup.cs`. Vous devez spécifier les assemblages contenant vos consommateurs.
+Add MsgFlux to your service container in `Program.cs` or `Startup.cs`. You must specify the assemblies containing your consumers.
 
 ```csharp
 using MsgFlux.Core;
@@ -29,17 +29,17 @@ using MsgFlux.Core;
 builder.Services.AddMsgFlux(typeof(Program).Assembly);
 ```
 
-### 2. Définition d'un message
+### 2. Defining a Message
 
-Un message peut être n'importe quelle classe ou enregistrement (record).
+A message can be any class or record.
 
 ```csharp
 public record UserCreated(string UserId, string Email);
 ```
 
-### 3. Création d'un consommateur
+### 3. Creating a Consumer
 
-Implémentez l'interface `IConsume<T>` pour définir comment traiter un message.
+Implement the `IConsume<T>` interface to define how to process a message.
 
 ```csharp
 using MsgFlux.Core;
@@ -55,15 +55,15 @@ public class UserCreatedConsumer : IConsume<UserCreated>
 
     public async Task HandleAsync(UserCreated message, CancellationToken ct)
     {
-        _logger.LogInformation("Nouvel utilisateur créé : {UserId}, Email : {Email}", message.UserId, message.Email);
+        _logger.LogInformation("New user created: {UserId}, Email: {Email}", message.UserId, message.Email);
         await Task.CompletedTask;
     }
 }
 ```
 
-### 4. Publication d'un message
+### 4. Publishing a Message
 
-Injectez `IPublish` pour envoyer des messages.
+Inject `IPublish` to send messages.
 
 ```csharp
 using MsgFlux.Core;
@@ -83,10 +83,10 @@ public class UserController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request)
     {
-        // Logique de création...
+        // Creation logic...
         var userId = Guid.NewGuid().ToString();
 
-        // Publication de l'événement
+        // Publishing the event
         await _publisher.PublishAsync(new UserCreated(userId, request.Email));
 
         return Ok(new { UserId = userId });
@@ -96,17 +96,17 @@ public class UserController : ControllerBase
 
 ## Architecture
 
-*   **Engine** : Service hébergé (`BackgroundService`) qui écoute les canaux et distribue les messages aux consommateurs appropriés.
-*   **Publisher** : Service responsable de la sérialisation et de l'envoi des messages dans les canaux.
-*   **Registry** : Maintient la liste des types de messages et des consommateurs associés.
-*   **RxTx** : Abstraction sur `System.Threading.Channels` pour la transmission des messages.
+*   **Engine**: Hosted service (`BackgroundService`) that listens to channels and distributes messages to the appropriate consumers.
+*   **Publisher**: Service responsible for serializing and sending messages into channels.
+*   **Registry**: Maintains the list of message types and associated consumers.
+*   **RxTx**: Abstraction over `System.Threading.Channels` for message transmission.
 
-## Résilience
+## Resilience
 
-MsgFlux utilise une pipeline de résilience par défaut configurée avec :
-*   3 tentatives de réessai (Retries).
-*   Un délai exponentiel (Backoff) commençant à 200ms.
+MsgFlux uses a default resilience pipeline configured with:
+*   3 retry attempts.
+*   Exponential backoff starting at 200ms.
 
-## Licence
+## License
 
-Voir le fichier [LICENSE](LICENSE).
+See the [LICENSE](LICENSE) file.
