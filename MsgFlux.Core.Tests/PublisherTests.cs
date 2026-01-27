@@ -12,7 +12,7 @@ public class PublisherTests
         // Arrange
         var rxTx = new InMemoryRxTx();
         var serializer = new JsonSerializer();
-        var publisher = new FluxPublisher(rxTx, serializer);
+        var publisher = new Publisher(rxTx, serializer);
         var message = new TestMessage("Hello World");
 
         // Setup ActivityListener to verify OpenTelemetry behavior

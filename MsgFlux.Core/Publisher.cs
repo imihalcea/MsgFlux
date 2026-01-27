@@ -4,7 +4,7 @@ using MsgFlux.Core.Serialization;
 
 namespace MsgFlux.Core;
 
-public class FluxPublisher(IChannelRxTx channelRxTx, ISerializer serializer) : IPublish
+public class Publisher(IChannelRxTx channelRxTx, ISerializer serializer) : IPublish
 {
     private static readonly ActivitySource ActivitySource = new("Flux");
 
