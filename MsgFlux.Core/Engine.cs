@@ -5,26 +5,57 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
+using Polly;
+using Polly.Retry;
 
 namespace MsgFlux.Core;
 
-public partial class Engine(
-    IServiceProvider serviceProvider,
-    IChannelRxTx channelRxTx,
-    ISerializer serializer,
-    Registry registry,
-    ILogger<Engine> logger) : BackgroundService
+public partial class Engine : BackgroundService
 {
-    private static readonly ActivitySource ActivitySource = new("Flux");
+    private readonly IServiceProvider _serviceProvider;
+    private readonly IChannelRxTx _channelRxTx;
+    private readonly ISerializer _serializer;
+    private readonly Registry _registry;
+    private readonly ILogger<Engine> _logger;
+    private static readonly ActivitySource ActivitySource = new("MsgFlux");
     private readonly List<Task> _processingTasks = new();
+    private readonly ResiliencePipeline _pipeline;
+
+    public Engine(
+        IServiceProvider serviceProvider,
+        IChannelRxTx channelRxTx,
+        ISerializer serializer,
+        Registry registry,
+        ILogger<Engine> logger)
+    {
+        _serviceProvider = serviceProvider;
+        _channelRxTx = channelRxTx;
+        _serializer = serializer;
+        _registry = registry;
+        _logger = logger;
+
+        _pipeline = new ResiliencePipelineBuilder()
+            .AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = 3,
+                Delay = TimeSpan.FromMilliseconds(200),
+                BackoffType = DelayBackoffType.Exponential,
+                OnRetry = args =>
+                {
+                    LogRetryAttempt(_logger, args.AttemptNumber, args.Outcome.Exception?.Message ?? "Unknown error");
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build();
+    }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var messageTypes = registry.GetMessageTypes();
+        var messageTypes = _registry.GetMessageTypes();
 
         foreach (var messageType in messageTypes)
         {
-            LogDiscoveredConsumerForMessageType(logger, messageType.Name);
+            LogDiscoveredConsumerForMessageType(_logger, messageType.Name);
             _processingTasks.Add(ProcessChannelAsync(messageType, stoppingToken));
         }
 
@@ -33,7 +64,7 @@ public partial class Engine(
 
     private async Task ProcessChannelAsync(Type messageType, CancellationToken ct)
     {
-        var reader = channelRxTx.GetReader(messageType);
+        var reader = _channelRxTx.GetReader(messageType);
 
         try
         {
@@ -47,7 +78,7 @@ public partial class Engine(
                     }
                     catch (Exception ex)
                     {
-                        LogProcessingError(logger, messageType.Name, ex);
+                        LogProcessingError(_logger, messageType.Name, ex);
                     }
                 }
             }
@@ -58,13 +89,13 @@ public partial class Engine(
         }
         catch (Exception ex)
         {
-             LogChannelLoopError(logger, messageType.Name, ex);
+             LogChannelLoopError(_logger, messageType.Name, ex);
         }
     }
 
     private async Task DispatchAsync(Envelope envelope, Type messageType, CancellationToken ct)
     {
-        using var scope = serviceProvider.CreateScope();
+        using var scope = _serviceProvider.CreateScope();
         var consumerType = typeof(IConsume<>).MakeGenericType(messageType);
         var consumers = scope.ServiceProvider.GetServices(consumerType).ToArray();
         
@@ -73,16 +104,16 @@ public partial class Engine(
         object? message;
         try 
         {
-            message = serializer.Deserialize(envelope.Payload, messageType);
+            message = _serializer.Deserialize(envelope.Payload, messageType);
             if (message == null) 
             {
-                LogDeserializationError(logger, messageType.Name);
+                LogDeserializationError(_logger, messageType.Name);
                 return;
             }
         }
         catch (Exception ex)
         {
-            LogDeserializationException(logger, messageType.Name, ex);
+            LogDeserializationException(_logger, messageType.Name, ex);
             return;
         }
 
@@ -93,29 +124,44 @@ public partial class Engine(
         var tasks = new List<Task>(consumers.Length);
         foreach (var consumer in consumers)
         {
-            // We wrap each consumer execution in a safe block to ensure one failure doesn't stop others
-            // This is a preliminary step before Polly
-            tasks.Add(SafeExecuteConsumerAsync(consumer, message, consumerType, ct));
+            if (consumer != null) tasks.Add(SafeExecuteConsumerAsync(consumer, message, consumerType, ct));
         }
 
         await Task.WhenAll(tasks);
     }
 
-    private async Task SafeExecuteConsumerAsync(object consumer, object message, Type consumerType, CancellationToken ct)
+    private async Task SafeExecuteConsumerAsync(
+        object consumer, 
+        object message, 
+        Type consumerType, 
+        CancellationToken ct)
     {
+        var consumerName = consumer.GetType().Name;
         try
         {
-            var method = consumerType.GetMethod("HandleAsync");
-            if (method != null)
+            await _pipeline.ExecuteAsync(async token =>
             {
-                await (Task)method.Invoke(consumer, [message, ct])!;
-            }
+                var method = consumerType.GetMethod("HandleAsync");
+                if (method != null)
+                {
+                    try 
+                    {
+                        await (Task)method.Invoke(consumer, [message, token])!;
+                    }
+                    catch (TargetInvocationException ex)
+                    {
+                        if (ex.InnerException != null)
+                        {
+                            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+                        }
+                        throw;
+                    }
+                }
+            }, ct);
         }
         catch (Exception ex)
         {
-             LogConsumerError(logger, consumer.GetType().Name, ex);
-             // In Step 4, Polly will handle retries here.
-             // For now, we swallow the exception to protect other consumers.
+             LogConsumerError(_logger, consumerName, ex);
              Activity.Current?.SetStatus(ActivityStatusCode.Error, ex.Message);
         }
     }
@@ -148,6 +194,9 @@ public partial class Engine(
     [LoggerMessage(LogLevel.Error, "Exception during deserialization of message type {messageType}")]
     static partial void LogDeserializationException(ILogger<Engine> logger, string messageType, Exception ex);
 
-    [LoggerMessage(LogLevel.Error, "Consumer {consumerName} failed")]
+    [LoggerMessage(LogLevel.Error, "Consumer {consumerName} failed after retries")]
     static partial void LogConsumerError(ILogger<Engine> logger, string consumerName, Exception ex);
+
+    [LoggerMessage(LogLevel.Warning, "Retry attempt {attemptNumber} due to: {errorMessage}")]
+    static partial void LogRetryAttempt(ILogger<Engine> logger, int attemptNumber, string errorMessage);
 }

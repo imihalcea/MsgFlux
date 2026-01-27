@@ -51,7 +51,9 @@ public class SendAndRecieveMessagesTest
         var blockedWriteTask = writer.WriteAsync(envelope2).AsTask();
         await Task.WhenAny(blockedWriteTask, Task.Delay(50));
         Assert.That(blockedWriteTask.IsCompleted, Is.False, "Producer should be blocked when channel is full");
+        
         await reader.ReadAsync();
+        
         // The blocked write task should complete.
         var completedTask = await Task.WhenAny(blockedWriteTask, Task.Delay(1000));
         Assert.That(completedTask, Is.EqualTo(blockedWriteTask), "Producer should resume when space becomes available");

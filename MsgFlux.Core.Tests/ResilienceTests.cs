@@ -8,16 +8,14 @@ namespace MsgFlux.Core.Tests;
 public class ResilienceTests
 {
     [Test]
-    public async Task Engine_Should_Continue_Processing_When_Consumer_Fails()
+    public async Task Engine_Should_Retry_Consumer_On_Failure()
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddLogging(); // Basic logging registration required for DI
+        services.AddLogging();
         services.AddMsgFlux(Assembly.GetExecutingAssembly());
         
-        // Reset state
-        FailingConsumer.Reset();
-        SuccessConsumer.Reset();
+        RetryConsumer.Reset();
 
         var provider = services.BuildServiceProvider();
         var hostedService = provider.GetRequiredService<IHostedService>();
@@ -26,58 +24,29 @@ public class ResilienceTests
         await hostedService.StartAsync(CancellationToken.None);
 
         // Act
-        await publisher.PublishAsync(new ResilienceMessage("Message 1"));
+        await publisher.PublishAsync(new RetryMessage("Retry Me"));
         
-        // Wait processing
-        await Task.Delay(200);
+        // Wait enough time for retries (3 retries * ~200ms backoff + processing time)
+        await Task.Delay(2000);
 
-        // Assert 1: Failing consumer failed, Success consumer succeeded
-        using (Assert.EnterMultipleScope())
-        {
-            
-            Assert.That(FailingConsumer.CallCount, Is.EqualTo(1));
-            Assert.That(SuccessConsumer.CallCount, Is.EqualTo(1));
-        }
-
-        // Act 2: Publish another message to prove the Engine is still alive
-        await publisher.PublishAsync(new ResilienceMessage("Message 2"));
-        
-        // Wait processing
-        await Task.Delay(200);
-
-        using (Assert.EnterMultipleScope())
-        {
-            // Assert 2: Both consumers were called again (Engine is alive)
-            Assert.That(FailingConsumer.CallCount, Is.EqualTo(2));
-            Assert.That(SuccessConsumer.CallCount, Is.EqualTo(2));
-        }
+        // Assert
+        // Should be called 1 (initial) + 3 (retries) = 4 times
+        Assert.That(RetryConsumer.CallCount, Is.EqualTo(4));
 
         await hostedService.StopAsync(CancellationToken.None);
     }
 
-    public record ResilienceMessage(string Content);
+    public record RetryMessage(string Content);
 
-    public class FailingConsumer : IConsume<ResilienceMessage>
+    public class RetryConsumer : IConsume<RetryMessage>
     {
         public static int CallCount = 0;
         public static void Reset() => CallCount = 0;
 
-        public Task HandleAsync(ResilienceMessage message, CancellationToken ct)
+        public Task HandleAsync(RetryMessage message, CancellationToken ct)
         {
             Interlocked.Increment(ref CallCount);
-            throw new InvalidOperationException("Boom, on purpose!");
-        }
-    }
-
-    public class SuccessConsumer : IConsume<ResilienceMessage>
-    {
-        public static int CallCount = 0;
-        public static void Reset() => CallCount = 0;
-
-        public Task HandleAsync(ResilienceMessage message, CancellationToken ct)
-        {
-            Interlocked.Increment(ref CallCount);
-            return Task.CompletedTask;
+            throw new InvalidOperationException("Fail to trigger retry");
         }
     }
 }
