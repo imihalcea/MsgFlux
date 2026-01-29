@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
 
@@ -12,7 +14,8 @@ public class PublisherTests
         // Arrange
         var rxTx = new InMemoryRxTx();
         var serializer = new JsonSerializer();
-        var publisher = new Publisher(rxTx, serializer);
+        var logger = NullLogger<Publisher>.Instance;
+        var publisher = new Publisher(rxTx, serializer, logger);
         var message = new TestMessage("Hello World");
 
         // Setup ActivityListener to verify OpenTelemetry behavior
@@ -41,5 +44,45 @@ public class PublisherTests
         Assert.That(deserialized, Is.EqualTo(message));
     }
 
+    [Test]
+    public async Task PublishAsync_Should_Log_Warning_When_Payload_Exceeds_Configured_Limit()
+    {
+        // Arrange
+        var options = new MsgFluxOptions().WithMaxPayloadSizeKb(1); // 1KB limit
+        var rxTx = new InMemoryRxTx(options);
+        var serializer = new JsonSerializer();
+        var logger = new TestLogger<Publisher>();
+        var publisher = new Publisher(rxTx, serializer, logger, options);
+        
+        // Create a message that will serialize to > 1KB
+        var largeContent = new string('a', 1025);
+        var message = new TestMessage(largeContent);
+
+        // Act
+        await publisher.PublishAsync(message);
+
+        // Assert
+        Assert.That(logger.LogEntries.Count, Is.GreaterThan(0));
+        var warning = logger.LogEntries.FirstOrDefault(e => e.LogLevel == LogLevel.Warning);
+        Assert.That(warning, Is.Not.Null, "Should have logged a warning");
+        Assert.That(warning!.Message, Does.Contain("exceeds 1KB"));
+    }
+
     private record TestMessage(string Content);
+
+    private class TestLogger<T> : ILogger<T>
+    {
+        public List<LogEntry> LogEntries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            LogEntries.Add(new LogEntry(logLevel, formatter(state, exception)));
+        }
+
+        public record LogEntry(LogLevel LogLevel, string Message);
+    }
 }

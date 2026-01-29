@@ -7,8 +7,12 @@ namespace MsgFlux.Core;
 
 public static class Extensions
 {
-    public static IServiceCollection AddMsgFlux(this IServiceCollection services, params Assembly[] assemblies)
+    public static IServiceCollection AddMsgFlux(this IServiceCollection services, Action<MsgFluxOptions>? configureOptions = null, params Assembly[] assemblies)
     {
+        var options = new MsgFluxOptions();
+        configureOptions?.Invoke(options);
+        services.AddSingleton(options);
+
         services.AddSingleton<IChannelRxTx, InMemoryRxTx>();
         services.AddSingleton<ISerializer, JsonSerializer>();
         services.AddSingleton<IPublish, Publisher>();
@@ -45,5 +49,11 @@ public static class Extensions
         }
 
         return services;
+    }
+
+    // Overload to keep backward compatibility with existing calls that just pass assemblies
+    public static IServiceCollection AddMsgFlux(this IServiceCollection services, params Assembly[] assemblies)
+    {
+        return AddMsgFlux(services, null, assemblies);
     }
 }

@@ -10,7 +10,12 @@ builder.Services.AddLogging(logging =>
     logging.AddConsole();
     logging.AddDebug();
 });
-builder.Services.AddMsgFlux(typeof(Program).Assembly);
+builder.Services.AddMsgFlux(options =>
+{
+    options
+        .WithChannelCapacity(1000)
+        .WithMaxPayloadSizeKb(1);
+},typeof(Program).Assembly);
 
 
 var app = builder.Build();

@@ -37,7 +37,8 @@ public class SendAndRecieveMessagesTest
     public async Task Should_Apply_Backpressure_When_Channel_Is_Full()
     {
         // Arrange: Channel with capacity 1
-        var rxTx = new InMemoryRxTx(capacity: 1);
+        var options = new MsgFluxOptions().WithChannelCapacity(1);
+        var rxTx = new InMemoryRxTx(options);
         var messageType = typeof(int);
         var writer = rxTx.GetWriter(messageType);
         var reader = rxTx.GetReader(messageType);
