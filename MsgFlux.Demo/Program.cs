@@ -50,7 +50,11 @@ public class OrderCreatedConsumer(IPublish publisher, ILogger<OrderCreatedConsum
 {
     public async Task HandleAsync(OrderCreated message, CancellationToken ct)
     {
-        logger.LogInformation("Order created: {OrderId} for {Product} x {Quantity}", message.OrderId, message.Product, message.Quantity);
+        logger.LogInformation(
+            "Order created: {OrderId} for {Product} x {Quantity}", 
+            message.OrderId, 
+            message.Product, 
+            message.Quantity);
         
         // Simulate processing
         await Task.Delay(100, ct);
