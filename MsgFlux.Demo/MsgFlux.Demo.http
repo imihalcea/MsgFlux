@@ -1,0 +1,10 @@
+@MsgFlux.Demo_HostAddress = http://localhost:5265
+
+
+POST {{MsgFlux.Demo_HostAddress}}/orders
+Content-Type: application/json
+
+{
+  "product": "Laptop",
+  "quantity": 1
+}
