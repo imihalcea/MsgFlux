@@ -21,9 +21,8 @@ public static class Extensions
         {
             assemblies = [Assembly.GetCallingAssembly()];
         }
-
+        
         var consumerInterface = typeof(IConsume<>);
-
         foreach (var assembly in assemblies)
         {
             var types = assembly.GetTypes()
@@ -31,16 +30,16 @@ public static class Extensions
 
             foreach (var type in types)
             {
-                foreach (var i in type.GetInterfaces())
+                var consumersInterfaces = type
+                    .GetInterfaces()
+                    .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == consumerInterface);
+                
+                foreach (var i in consumersInterfaces)
                 {
-                    if (i.IsGenericType && i.GetGenericTypeDefinition() == consumerInterface)
-                    {
                         // Register the consumer
                         services.AddScoped(i, type);
-                        
                         var messageType = i.GetGenericArguments()[0];
                         registry.Register(messageType);
-                    }
                 }
             }
         }
