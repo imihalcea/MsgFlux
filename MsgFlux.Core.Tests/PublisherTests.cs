@@ -19,11 +19,9 @@ public class PublisherTests
         var message = new TestMessage { Content = "Hello World" };
 
         // Setup ActivityListener to verify OpenTelemetry behavior
-        using var activityListener = new ActivityListener
-        {
-            ShouldListenTo = s => s.Name == "Flux",
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
-        };
+        using var activityListener = new ActivityListener();
+        activityListener.ShouldListenTo = s => s.Name == "Flux";
+        activityListener.Sample = (ref _) => ActivitySamplingResult.AllData;
         ActivitySource.AddActivityListener(activityListener);
 
         // Act
@@ -41,6 +39,7 @@ public class PublisherTests
         }
 
         var deserialized = serializer.Deserialize<TestMessage>(envelope.Payload);
+        Assert.That(deserialized, Is.Not.Null);
         Assert.That(deserialized.Content, Is.EqualTo(message.Content));
     }
 

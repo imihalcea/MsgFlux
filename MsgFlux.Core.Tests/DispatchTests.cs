@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using MsgFlux.Core.RxTx;
 
 namespace MsgFlux.Core.Tests;
 
@@ -39,6 +40,48 @@ public class DispatchTests
         Assert.That(UserCreatedHandler2.HandledCount, Is.EqualTo(1));
         Assert.That(UserCreatedHandler1.LastUser, Is.EqualTo("Ionut"));
         Assert.That(UserCreatedHandler2.LastUser, Is.EqualTo("Ionut"));
+
+        await hostedService.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
+    public async Task Engine_Should_Survive_Poison_Message()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddMsgFlux(options =>
+        {
+            options.AddConsumer<UserCreatedHandler1>();
+        });
+        
+        UserCreatedHandler1.Reset();
+        var provider = services.BuildServiceProvider();
+        
+        var hostedService = provider.GetRequiredService<IHostedService>();
+        await hostedService.StartAsync(CancellationToken.None);
+
+        var rxTx = provider.GetRequiredService<IChannelRxTx>();
+        var publisher = provider.GetRequiredService<IPublish>();
+
+        // Act 1: Inject Poison Message (Corrupted Bytes)
+        var writer = rxTx.GetWriter(typeof(UserCreated));
+        await writer.WriteAsync(new Envelope(
+            MessageId: Guid.NewGuid().ToString(),
+            Payload: [0xDE, 0xAD, 0xBE, 0xEF], // Invalid Brotli/JSON
+            Headers: new Dictionary<string, string>(),
+            MessageType: nameof(UserCreated)
+        ));
+
+        // Act 2: Send Valid Message
+        await publisher.PublishAsync(new UserCreated { Name = "Survivor" });
+
+        // Assert - Wait for processing
+        await Task.Delay(500);
+        
+        // The poison message should be logged and skipped, and the valid message should be processed.
+        Assert.That(UserCreatedHandler1.HandledCount, Is.EqualTo(1));
+        Assert.That(UserCreatedHandler1.LastUser, Is.EqualTo("Survivor"));
 
         await hostedService.StopAsync(CancellationToken.None);
     }
