@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using MsgFlux.Core;
+using ProtoBuf;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,8 +15,10 @@ builder.Services.AddMsgFlux(options =>
 {
     options
         .WithChannelCapacity(1000)
-        .WithMaxPayloadSizeKb(1);
-},typeof(Program).Assembly);
+        .WithMaxPayloadSizeKb(1)
+        .AddConsumer<OrderCreatedConsumer>()
+        .AddConsumer<InventoryReservedConsumer>();
+});
 
 
 var app = builder.Build();
@@ -31,7 +34,7 @@ app.UseHttpsRedirection();
 app.MapPost("/orders", async ([FromBody] CreateOrderRequest request, IPublish publisher, ILogger<Program> logger) =>
 {
     logger.LogInformation("Received order request for {Product} x {Quantity}", request.Product, request.Quantity);
-    var orderCreated = new OrderCreated(Guid.NewGuid(), request.Product, request.Quantity);
+    var orderCreated = new OrderCreated { OrderId = Guid.NewGuid(), Product = request.Product, Quantity = request.Quantity };
     await publisher.PublishAsync(orderCreated);
     logger.LogInformation("Published OrderCreated event for OrderId: {OrderId}", orderCreated.OrderId);
     return Results.Accepted($"/orders/{orderCreated.OrderId}", orderCreated);
@@ -42,8 +45,44 @@ app.Run();
 
 // Messages
 public record CreateOrderRequest(string Product, int Quantity);
-public record OrderCreated(Guid OrderId, string Product, int Quantity);
-public record InventoryReserved(Guid OrderId, string Product, int Quantity);
+
+[ProtoContract]
+public class OrderCreated
+{
+    [ProtoMember(1)]
+    public Guid OrderId { get; set; }
+    [ProtoMember(2)]
+    public string Product { get; set; } = string.Empty;
+    [ProtoMember(3)]
+    public int Quantity { get; set; }
+    
+    public OrderCreated() {}
+    public OrderCreated(Guid orderId, string product, int quantity)
+    {
+        OrderId = orderId;
+        Product = product;
+        Quantity = quantity;
+    }
+}
+
+[ProtoContract]
+public class InventoryReserved
+{
+    [ProtoMember(1)]
+    public Guid OrderId { get; set; }
+    [ProtoMember(2)]
+    public string Product { get; set; } = string.Empty;
+    [ProtoMember(3)]
+    public int Quantity { get; set; }
+
+    public InventoryReserved() {}
+    public InventoryReserved(Guid orderId, string product, int quantity)
+    {
+        OrderId = orderId;
+        Product = product;
+        Quantity = quantity;
+    }
+}
 
 // Consumers
 public class OrderCreatedConsumer(IPublish publisher, ILogger<OrderCreatedConsumer> logger) : IConsume<OrderCreated>

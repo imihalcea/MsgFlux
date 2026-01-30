@@ -1,7 +1,7 @@
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NUnit.Framework;
+using ProtoBuf;
 
 namespace MsgFlux.Core.Tests;
 
@@ -13,7 +13,10 @@ public class ResilienceTests
         // Arrange
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddMsgFlux(Assembly.GetExecutingAssembly());
+        services.AddMsgFlux(options =>
+        {
+            options.AddConsumer<RetryConsumer>();
+        });
         
         RetryConsumer.Reset();
 
@@ -24,7 +27,7 @@ public class ResilienceTests
         await hostedService.StartAsync(CancellationToken.None);
 
         // Act
-        await publisher.PublishAsync(new RetryMessage("Retry Me"));
+        await publisher.PublishAsync(new RetryMessage { Content = "Retry Me" });
         
         // Wait enough time for retries (3 retries * ~200ms backoff + processing time)
         await Task.Delay(2000);
@@ -36,7 +39,12 @@ public class ResilienceTests
         await hostedService.StopAsync(CancellationToken.None);
     }
 
-    public record RetryMessage(string Content);
+    [ProtoContract]
+    public class RetryMessage
+    {
+        [ProtoMember(1)]
+        public string Content { get; set; } = string.Empty;
+    }
 
     public class RetryConsumer : IConsume<RetryMessage>
     {

@@ -8,7 +8,7 @@ namespace MsgFlux.Core;
 
 public static class Extensions
 {
-    public static IServiceCollection AddMsgFlux(this IServiceCollection services, Action<MsgFluxOptions>? configureOptions = null, params Assembly[] assemblies)
+    public static IServiceCollection AddMsgFlux(this IServiceCollection services, Action<MsgFluxOptions>? configureOptions = null)
     {
         var options = new MsgFluxOptions();
         configureOptions?.Invoke(options);
@@ -25,39 +25,12 @@ public static class Extensions
         var registry = new Registry();
         services.AddSingleton(registry);
 
-        if (assemblies.Length == 0)
+        // Execute explicit consumer registrations
+        foreach (var registration in options.ConsumerRegistrations)
         {
-            assemblies = [Assembly.GetCallingAssembly()];
-        }
-        
-        var consumerInterface = typeof(IConsume<>);
-        foreach (var assembly in assemblies)
-        {
-            var types = assembly.GetTypes()
-                .Where(t => t is { IsClass: true, IsAbstract: false });
-
-            foreach (var type in types)
-            {
-                var consumersInterfaces = type
-                    .GetInterfaces()
-                    .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == consumerInterface);
-                
-                foreach (var i in consumersInterfaces)
-                {
-                        // Register the consumer
-                        services.AddScoped(i, type);
-                        var messageType = i.GetGenericArguments()[0];
-                        registry.Register(messageType);
-                }
-            }
+            registration(services, registry);
         }
 
         return services;
-    }
-
-    // Overload to keep backward compatibility with existing calls that just pass assemblies
-    public static IServiceCollection AddMsgFlux(this IServiceCollection services, params Assembly[] assemblies)
-    {
-        return AddMsgFlux(services, null, assemblies);
     }
 }

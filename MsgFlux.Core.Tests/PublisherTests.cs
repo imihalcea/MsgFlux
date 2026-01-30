@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
+using ProtoBuf;
 
 namespace MsgFlux.Core.Tests;
 
@@ -13,10 +14,10 @@ public class PublisherTests
     {
         // Arrange
         var rxTx = new InMemoryRxTx();
-        var serializer = new JsonSerializer();
+        var serializer = new ProtoBufSerializer();
         var logger = NullLogger<Publisher>.Instance;
         var publisher = new Publisher(rxTx, serializer, logger);
-        var message = new TestMessage("Hello World");
+        var message = new TestMessage { Content = "Hello World" };
 
         // Setup ActivityListener to verify OpenTelemetry behavior
         using var activityListener = new ActivityListener
@@ -41,7 +42,7 @@ public class PublisherTests
         }
 
         var deserialized = serializer.Deserialize<TestMessage>(envelope.Payload);
-        Assert.That(deserialized, Is.EqualTo(message));
+        Assert.That(deserialized.Content, Is.EqualTo(message.Content));
     }
 
     [Test]
@@ -50,13 +51,13 @@ public class PublisherTests
         // Arrange
         var options = new MsgFluxOptions().WithMaxPayloadSizeKb(1); // 1KB limit
         var rxTx = new InMemoryRxTx(options);
-        var serializer = new JsonSerializer();
+        var serializer = new ProtoBufSerializer();
         var logger = new TestLogger<Publisher>();
         var publisher = new Publisher(rxTx, serializer, logger, options);
         
         // Create a message that will serialize to > 1KB
         var largeContent = new string('a', 1025);
-        var message = new TestMessage(largeContent);
+        var message = new TestMessage { Content = largeContent };
 
         // Act
         await publisher.PublishAsync(message);
@@ -68,7 +69,12 @@ public class PublisherTests
         Assert.That(warning!.Message, Does.Contain("exceeds 1KB"));
     }
 
-    private record TestMessage(string Content);
+    [ProtoContract]
+    public class TestMessage
+    {
+        [ProtoMember(1)]
+        public string Content { get; set; } = string.Empty;
+    }
 
     private class TestLogger<T> : ILogger<T>
     {

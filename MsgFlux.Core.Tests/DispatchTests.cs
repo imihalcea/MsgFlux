@@ -1,6 +1,6 @@
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using ProtoBuf;
 
 namespace MsgFlux.Core.Tests;
 
@@ -13,7 +13,11 @@ public class DispatchTests
         var services = new ServiceCollection();
         
         services.AddLogging();
-        services.AddMsgFlux(Assembly.GetExecutingAssembly());
+        services.AddMsgFlux(options =>
+        {
+            options.AddConsumer<UserCreatedHandler1>();
+            options.AddConsumer<UserCreatedHandler2>();
+        });
         
         // Test State
         UserCreatedHandler1.Reset();
@@ -27,7 +31,7 @@ public class DispatchTests
 
         // Act
         var publisher = provider.GetRequiredService<IPublish>();
-        await publisher.PublishAsync(new UserCreated("Ionut"));
+        await publisher.PublishAsync(new UserCreated { Name = "Ionut" });
 
         // Assert - Wait for processing
         await Task.Delay(500); // Simple wait for test
@@ -40,7 +44,12 @@ public class DispatchTests
         await hostedService.StopAsync(CancellationToken.None);
     }
 
-    public record UserCreated(string Name);
+    [ProtoContract]
+    public class UserCreated
+    {
+        [ProtoMember(1)]
+        public string Name { get; set; } = string.Empty;
+    }
 
     public class UserCreatedHandler1 : IConsume<UserCreated>
     {
