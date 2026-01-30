@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
 
@@ -14,7 +15,10 @@ public static class Extensions
         services.AddSingleton(options);
 
         services.AddSingleton<IChannelRxTx, InMemoryRxTx>();
-        services.AddSingleton<ISerializer, JsonSerializer>();
+        
+        // Register the serializer based on options
+        services.AddSingleton(typeof(ISerializer), options.SerializerType);
+
         services.AddSingleton<IPublish, Publisher>();
         services.AddHostedService<Engine>();
         
