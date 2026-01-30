@@ -20,19 +20,22 @@ public partial class Engine : BackgroundService
     private static readonly ActivitySource ActivitySource = new("MsgFlux");
     private readonly List<Task> _processingTasks = new();
     private readonly ResiliencePipeline _pipeline;
+    private readonly MsgFluxOptions _options;
 
     public Engine(
         IServiceProvider serviceProvider,
         IChannelRxTx channelRxTx,
         ISerializer serializer,
         Registry registry,
-        ILogger<Engine> logger)
+        ILogger<Engine> logger,
+        MsgFluxOptions options)
     {
         _serviceProvider = serviceProvider;
         _channelRxTx = channelRxTx;
         _serializer = serializer;
         _registry = registry;
         _logger = logger;
+        _options = options;
 
         _pipeline = new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
@@ -68,20 +71,25 @@ public partial class Engine : BackgroundService
 
         try
         {
-            while (await reader.WaitToReadAsync(ct))
+            // Use Parallel.ForEachAsync to process messages concurrently
+            // MaxDegreeOfParallelism can be configured via options or defaulted to ProcessorCount
+            var parallelOptions = new ParallelOptions
             {
-                while (reader.TryRead(out var envelope))
+                CancellationToken = ct,
+                MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism > 0 ? _options.MaxDegreeOfParallelism : Environment.ProcessorCount
+            };
+
+            await Parallel.ForEachAsync(reader.ReadAllAsync(ct), parallelOptions, async (envelope, token) =>
+            {
+                try
                 {
-                    try
-                    {
-                        await DispatchAsync(envelope, messageType, ct);
-                    }
-                    catch (Exception ex)
-                    {
-                        LogProcessingError(_logger, messageType.Name, ex);
-                    }
+                    await DispatchAsync(envelope, messageType, token);
                 }
-            }
+                catch (Exception ex)
+                {
+                    LogProcessingError(_logger, messageType.Name, ex);
+                }
+            });
         }
         catch (OperationCanceledException)
         {

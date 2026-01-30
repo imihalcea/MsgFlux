@@ -35,7 +35,7 @@ public class InMemoryRxTx(MsgFluxOptions options) : IChannelRxTx
             {
                 FullMode = BoundedChannelFullMode.Wait,
                 SingleWriter = false,
-                SingleReader = true
+                SingleReader = false
             };
             return Channel.CreateBounded<Envelope>(channelOptions);
         });
