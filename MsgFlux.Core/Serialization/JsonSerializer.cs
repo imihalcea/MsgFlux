@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text.Json;
 using SysJsonSerializer = System.Text.Json.JsonSerializer;
 
@@ -10,14 +11,27 @@ public class JsonSerializer : ISerializer
         PropertyNameCaseInsensitive = true
     };
 
+    public byte[] Serialize<T>(T message)
+    {
+        using var outputStream = new MemoryStream();
+        using (var brotliStream = new BrotliStream(outputStream, CompressionLevel.Fastest))
+        {
+            SysJsonSerializer.Serialize(brotliStream, message, Options);
+        }
+        return outputStream.ToArray();
+    }
 
-    public byte[] Serialize<T>(T message) =>
-        SysJsonSerializer.SerializeToUtf8Bytes(message, Options);
+    public T? Deserialize<T>(byte[] bytes)
+    {
+        using var inputStream = new MemoryStream(bytes);
+        using var brotliStream = new BrotliStream(inputStream, CompressionMode.Decompress);
+        return SysJsonSerializer.Deserialize<T>(brotliStream, Options);
+    }
 
-
-    public T? Deserialize<T>(byte[] bytes) =>
-        SysJsonSerializer.Deserialize<T>(bytes, Options);
-
-    public object? Deserialize(byte[] bytes, Type type) =>
-        SysJsonSerializer.Deserialize(bytes, type, Options);
+    public object? Deserialize(byte[] bytes, Type type)
+    {
+        using var inputStream = new MemoryStream(bytes);
+        using var brotliStream = new BrotliStream(inputStream, CompressionMode.Decompress);
+        return SysJsonSerializer.Deserialize(brotliStream, type, Options);
+    }
 }

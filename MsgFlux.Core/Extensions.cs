@@ -15,10 +15,7 @@ public static class Extensions
         services.AddSingleton(options);
 
         services.AddSingleton<IChannelRxTx, InMemoryRxTx>();
-        
-        // Register the serializer based on options
-        services.AddSingleton(typeof(ISerializer), options.SerializerType);
-
+        services.AddSingleton<ISerializer, JsonSerializer>();
         services.AddSingleton<IPublish, Publisher>();
         services.AddHostedService<Engine>();
         
