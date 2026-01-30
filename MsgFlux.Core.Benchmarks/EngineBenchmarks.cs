@@ -43,9 +43,9 @@ public class EngineBenchmarks
         // Remove Console logging for benchmarks to avoid I/O overhead
         services.AddLogging();
         
-        // Ensure channel capacity is enough for the largest test to avoid channel full blocking affecting publish time too much,
-        // If we want to measure pure processing speed, we might want larger capacity, but let's stick to 15_000 as per previous code.
-        services.AddSingleton<IChannelRxTx>(new InMemoryRxTx(new MsgFluxOptions { ChannelCapacity = 15_000 }));
+        var options = new MsgFluxOptions { ChannelCapacity = 15_000 };
+        services.AddSingleton(options);
+        services.AddSingleton<IChannelRxTx>(new InMemoryRxTx(options));
         services.AddSingleton<ISerializer, JsonSerializer>();
         services.AddSingleton<Registry>();
         services.AddSingleton<Engine>();
