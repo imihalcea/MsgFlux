@@ -9,7 +9,6 @@ public partial class Publisher(IChannelRxTx channelRxTx, ISerializer serializer,
 {
     private static readonly ActivitySource ActivitySource = new("Flux");
 
-    // Constructor for backward compatibility or testing if needed, defaulting options
     public Publisher(IChannelRxTx channelRxTx, ISerializer serializer, ILogger<Publisher> logger) 
         : this(channelRxTx, serializer, logger, new MsgFluxOptions())
     {

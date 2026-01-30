@@ -11,8 +11,6 @@ public class InMemoryRxTx(MsgFluxOptions options) : IChannelRxTx
     {
     }
 
-    // Keep old constructor for backward compatibility if needed, or remove it.
-    // Adapting it to use options internally.
     public InMemoryRxTx(int capacity) : this(new MsgFluxOptions { ChannelCapacity = capacity })
     {
     }

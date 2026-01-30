@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using MsgFlux.Core;
-using ProtoBuf;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,14 +45,10 @@ app.Run();
 // Messages
 public record CreateOrderRequest(string Product, int Quantity);
 
-[ProtoContract]
 public class OrderCreated
 {
-    [ProtoMember(1)]
     public Guid OrderId { get; set; }
-    [ProtoMember(2)]
     public string Product { get; set; } = string.Empty;
-    [ProtoMember(3)]
     public int Quantity { get; set; }
     
     public OrderCreated() {}
@@ -65,14 +60,10 @@ public class OrderCreated
     }
 }
 
-[ProtoContract]
 public class InventoryReserved
 {
-    [ProtoMember(1)]
     public Guid OrderId { get; set; }
-    [ProtoMember(2)]
     public string Product { get; set; } = string.Empty;
-    [ProtoMember(3)]
     public int Quantity { get; set; }
 
     public InventoryReserved() {}

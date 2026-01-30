@@ -3,7 +3,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
-using ProtoBuf;
 
 namespace MsgFlux.Core.Tests;
 
@@ -14,7 +13,7 @@ public class PublisherTests
     {
         // Arrange
         var rxTx = new InMemoryRxTx();
-        var serializer = new ProtoBufSerializer();
+        var serializer = new JsonSerializer();
         var logger = NullLogger<Publisher>.Instance;
         var publisher = new Publisher(rxTx, serializer, logger);
         var message = new TestMessage { Content = "Hello World" };
@@ -51,12 +50,17 @@ public class PublisherTests
         // Arrange
         var options = new MsgFluxOptions().WithMaxPayloadSizeKb(1); // 1KB limit
         var rxTx = new InMemoryRxTx(options);
-        var serializer = new ProtoBufSerializer();
+        var serializer = new JsonSerializer();
         var logger = new TestLogger<Publisher>();
         var publisher = new Publisher(rxTx, serializer, logger, options);
         
-        // Create a message that will serialize to > 1KB
-        var largeContent = new string('a', 1025);
+        // Create a message that will serialize to > 1KB even with compression.
+        // Random data compresses poorly. 2KB of random data should suffice.
+        var random = new Random();
+        var buffer = new byte[2048];
+        random.NextBytes(buffer);
+        var largeContent = Convert.ToBase64String(buffer);
+
         var message = new TestMessage { Content = largeContent };
 
         // Act
@@ -69,10 +73,8 @@ public class PublisherTests
         Assert.That(warning!.Message, Does.Contain("exceeds 1KB"));
     }
 
-    [ProtoContract]
     public class TestMessage
     {
-        [ProtoMember(1)]
         public string Content { get; set; } = string.Empty;
     }
 

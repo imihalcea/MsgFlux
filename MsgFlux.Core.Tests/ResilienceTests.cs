@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NUnit.Framework;
-using ProtoBuf;
 
 namespace MsgFlux.Core.Tests;
 
@@ -39,10 +38,8 @@ public class ResilienceTests
         await hostedService.StopAsync(CancellationToken.None);
     }
 
-    [ProtoContract]
     public class RetryMessage
     {
-        [ProtoMember(1)]
         public string Content { get; set; } = string.Empty;
     }
 

@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ProtoBuf;
 
 namespace MsgFlux.Core.Tests;
 
@@ -44,10 +43,8 @@ public class DispatchTests
         await hostedService.StopAsync(CancellationToken.None);
     }
 
-    [ProtoContract]
     public class UserCreated
     {
-        [ProtoMember(1)]
         public string Name { get; set; } = string.Empty;
     }
 
