@@ -69,7 +69,6 @@ public class SerializationTests
         var serializer = new JsonSerializer();
         var message = new EmailMessage { To = "concurrent@test.com" };
         
-        // Run 1000 serializations in parallel
         Parallel.For(0, 1000, i =>
         {
             var bytes = serializer.Serialize(message);

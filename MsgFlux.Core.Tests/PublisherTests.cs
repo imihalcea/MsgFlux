@@ -20,7 +20,7 @@ public class PublisherTests
 
         // Setup ActivityListener to verify OpenTelemetry behavior
         using var activityListener = new ActivityListener();
-        activityListener.ShouldListenTo = s => s.Name == "Flux";
+        activityListener.ShouldListenTo = s => s.Name == "MsgFlux";
         activityListener.Sample = (ref _) => ActivitySamplingResult.AllData;
         ActivitySource.AddActivityListener(activityListener);
 

@@ -7,7 +7,7 @@ namespace MsgFlux.Core;
 
 public partial class Publisher(IChannelRxTx channelRxTx, ISerializer serializer, ILogger<Publisher> logger, MsgFluxOptions options) : IPublish
 {
-    private static readonly ActivitySource ActivitySource = new("Flux");
+    private static readonly ActivitySource ActivitySource = new("MsgFlux");
 
     public Publisher(IChannelRxTx channelRxTx, ISerializer serializer, ILogger<Publisher> logger) 
         : this(channelRxTx, serializer, logger, new MsgFluxOptions())
@@ -17,7 +17,7 @@ public partial class Publisher(IChannelRxTx channelRxTx, ISerializer serializer,
     public async Task PublishAsync<T>(T message, CancellationToken ct = default)
     {
         // ReSharper disable once ExplicitCallerInfoArgument
-        using var activity = ActivitySource.StartActivity("FluxPublisher.PublishAsync", ActivityKind.Producer);
+        using var activity = ActivitySource.StartActivity(nameof(PublishAsync), ActivityKind.Producer);
         
         var headers = new Dictionary<string, string>();
         if (activity != null)
