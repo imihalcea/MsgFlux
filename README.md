@@ -19,14 +19,17 @@ MsgFlux is a lightweight in-process messaging library for .NET, designed to faci
 
 ### 1. Configuration
 
-Add MsgFlux to your service container in `Program.cs` or `Startup.cs`. You must specify the assemblies containing your consumers.
+Add MsgFlux to your service container in `Program.cs` or `Startup.cs`. Register your consumers explicitly via the options callback.
 
 ```csharp
 using MsgFlux.Core;
 
 // ...
 
-builder.Services.AddMsgFlux(typeof(Program).Assembly);
+builder.Services.AddMsgFlux(options =>
+{
+    options.AddConsumer<UserCreatedConsumer>();
+});
 ```
 
 ### 2. Defining a Message
