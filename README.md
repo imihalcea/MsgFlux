@@ -122,7 +122,7 @@ When durability is enabled:
 1. **Persist-then-enqueue**: Messages are persisted to the store *before* being written to the in-memory channel. If the store is unavailable, the publish fails and the message is not enqueued.
 2. **Acknowledge on success**: After all consumers process a message successfully, it is marked as `Completed`.
 3. **Mark as failed**: If a consumer fails after all retries, the message is marked as `Failed` with an incremented retry count.
-4. **Replay on startup**: A `MessageReplayService` fetches all `Pending`, `Failed`, and stale `Processing` messages and re-injects them into the channels.
+4. **Periodic replay**: A `MessageReplayService` periodically fetches all `Pending`, `Failed`, and stale `Processing` messages and re-injects them into the channels.
 5. **Dead-letter**: During replay, messages that exceeded `MaxDeadLetterRetries` are moved to `DeadLettered` state instead of being re-enqueued.
 6. **Automatic purge**: A `MessagePurgeService` periodically deletes old `Completed` messages.
 
@@ -131,8 +131,9 @@ When durability is enabled:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `WithDurability()` | `false` | Enables the durability layer |
-| `WithStaleProcessingTimeout(TimeSpan)` | 5 minutes | Messages stuck in `Processing` longer than this are considered stale and replayed |
+| `WithStaleProcessingTimeout(TimeSpan)` | 5 minutes | Processing timeout per message and stale detection threshold |
 | `MaxDeadLetterRetries` | 3 | Failed messages exceeding this count are dead-lettered on replay |
+| `WithReplayInterval(TimeSpan)` | 30 seconds | How often the replay service checks for unprocessed messages |
 | `WithPurge(olderThan, interval)` | 7 days / 1 hour | Purge completed messages older than `olderThan`, checked every `interval` |
 
 ### Message Lifecycle
@@ -183,7 +184,7 @@ MsgFlux.Postgres ──ref──▶ MsgFlux.Abstractions + Npgsql
 *   **Publisher / DurablePublisher**: Services responsible for serializing and sending messages into channels. `DurablePublisher` persists before enqueue.
 *   **Registry**: Maintains the list of message types and associated consumers.
 *   **RxTx**: Abstraction over `System.Threading.Channels` for message transmission.
-*   **MessageReplayService**: Replays unprocessed messages on startup (durability mode).
+*   **MessageReplayService**: Periodically replays unprocessed messages (durability mode).
 *   **MessagePurgeService**: Periodically purges old completed messages (durability mode).
 
 ## Resilience
@@ -191,6 +192,16 @@ MsgFlux.Postgres ──ref──▶ MsgFlux.Abstractions + Npgsql
 MsgFlux uses a default resilience pipeline configured with:
 *   3 retry attempts.
 *   Exponential backoff starting at 200ms.
+
+## Processing Timeout
+
+Every message dispatch is bounded by `StaleProcessingTimeout` (default: 5 minutes), in both in-memory and durable modes. If a consumer exceeds this duration:
+
+- The `CancellationToken` passed to `HandleAsync` is signalled
+- The processing slot is freed immediately
+- In durable mode, the message is marked as `Failed` and will be retried by the replay service
+
+**Important**: `CancellationToken` in .NET is cooperative. Consumers **must** observe the token (pass it to `await`, check `ct.IsCancellationRequested`) for the timeout to take effect. A consumer that blocks without checking the token (e.g. `Thread.Sleep`, synchronous I/O without token) will not be interrupted — the slot is still freed, but the underlying work continues as a background task.
 
 ## License
 
