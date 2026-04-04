@@ -28,7 +28,7 @@ public static class Extensions
             services.AddSingleton<IPublish, Publisher>();
         }
 
-        services.AddHostedService<Engine>();
+        services.AddHostedService<EngineService>();
 
         var registry = new Registry();
         services.AddSingleton(registry);

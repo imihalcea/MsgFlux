@@ -11,7 +11,7 @@ namespace MsgFlux.Core.Benchmarks;
 public class EngineBenchmarks
 {
     private IServiceProvider _serviceProvider = null!;
-    private Engine _engine = null!;
+    private EngineService _engineService = null!;
     private IPublish _publisher = null!;
     private CancellationTokenSource _cts = null!;
     private Task _engineTask = null!;
@@ -49,16 +49,16 @@ public class EngineBenchmarks
         services.AddSingleton<IChannelRxTx>(new InMemoryRxTx(options));
         services.AddSingleton<ISerializer, JsonSerializer>();
         services.AddSingleton<Registry>();
-        services.AddSingleton<Engine>();
+        services.AddSingleton<EngineService>();
         services.AddSingleton<IPublish, Publisher>();
         services.AddTransient<IConsume<BenchmarkMessage>, BenchmarkConsumer>();
         
         _serviceProvider = services.BuildServiceProvider();
         
         var registry = _serviceProvider.GetRequiredService<Registry>();
-        registry.Register(typeof(BenchmarkMessage));
+        registry.Register<BenchmarkMessage>();
 
-        _engine = _serviceProvider.GetRequiredService<Engine>();
+        _engineService = _serviceProvider.GetRequiredService<EngineService>();
         _publisher = _serviceProvider.GetRequiredService<IPublish>();
     }
 
@@ -69,7 +69,7 @@ public class EngineBenchmarks
         BenchmarkConsumer.ProcessedCount = 0;
         BenchmarkConsumer.TargetCount = MessageCount;
         BenchmarkConsumer.Tcs = new TaskCompletionSource();
-        _engineTask = _engine.StartAsync(_cts.Token);
+        _engineTask = _engineService.StartAsync(_cts.Token);
     }
 
     [IterationCleanup]

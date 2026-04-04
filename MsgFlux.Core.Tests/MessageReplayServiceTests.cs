@@ -45,7 +45,7 @@ public class MessageReplayServiceTests
         await replayService.StartAsync(CancellationToken.None);
 
         // Then start Engine
-        var engine = provider.GetServices<IHostedService>().OfType<Engine>().First();
+        var engine = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await engine.StartAsync(CancellationToken.None);
 
         await Task.Delay(500);
@@ -79,7 +79,7 @@ public class MessageReplayServiceTests
         var provider = services.BuildServiceProvider();
 
         // Start Engine first
-        var engine = provider.GetServices<IHostedService>().OfType<Engine>().First();
+        var engine = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await engine.StartAsync(CancellationToken.None);
 
         // Start replay service

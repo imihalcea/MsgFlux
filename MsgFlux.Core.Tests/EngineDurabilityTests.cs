@@ -23,7 +23,7 @@ public class EngineDurabilityTests
         SuccessHandler.Reset();
         var provider = services.BuildServiceProvider();
 
-        var hostedService = provider.GetServices<IHostedService>().OfType<Engine>().First();
+        var hostedService = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await hostedService.StartAsync(CancellationToken.None);
 
         // Act
@@ -56,7 +56,7 @@ public class EngineDurabilityTests
         FailingHandler.Reset();
         var provider = services.BuildServiceProvider();
 
-        var hostedService = provider.GetServices<IHostedService>().OfType<Engine>().First();
+        var hostedService = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await hostedService.StartAsync(CancellationToken.None);
 
         // Act

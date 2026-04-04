@@ -66,7 +66,7 @@ public class MsgFluxOptions
         {
             var consumerType = typeof(TConsumer);
             var consumerInterface = typeof(IConsume<>);
-            
+
             var interfaces = consumerType.GetInterfaces()
                 .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == consumerInterface)
                 .ToList();
@@ -80,9 +80,14 @@ public class MsgFluxOptions
             {
                 services.AddScoped(i, consumerType);
                 var messageType = i.GetGenericArguments()[0];
-                registry.Register(messageType);
+                RegisterMethod.MakeGenericMethod(messageType).Invoke(null, [registry]);
             }
         });
         return this;
     }
+
+    private static readonly System.Reflection.MethodInfo RegisterMethod =
+        typeof(MsgFluxOptions).GetMethod(nameof(RegisterTyped), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+    private static void RegisterTyped<TMessage>(Registry registry) => registry.Register<TMessage>();
 }

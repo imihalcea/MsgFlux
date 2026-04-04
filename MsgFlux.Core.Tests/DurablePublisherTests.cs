@@ -24,7 +24,7 @@ public class DurablePublisherTests
         var provider = services.BuildServiceProvider();
 
         // Start only Engine (no ReplayService — nothing to replay, and it would race with publish)
-        var engine = provider.GetServices<IHostedService>().OfType<Engine>().First();
+        var engine = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await engine.StartAsync(CancellationToken.None);
 
         // Act
@@ -58,7 +58,7 @@ public class DurablePublisherTests
         DurableTestHandler.Reset();
         var provider = services.BuildServiceProvider();
 
-        var hostedService = provider.GetServices<IHostedService>().OfType<Engine>().First();
+        var hostedService = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await hostedService.StartAsync(CancellationToken.None);
 
         // Act & Assert

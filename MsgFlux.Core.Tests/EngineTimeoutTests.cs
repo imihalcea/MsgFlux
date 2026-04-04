@@ -25,7 +25,7 @@ public class EngineTimeoutTests
         HangingHandler.Reset();
         var provider = services.BuildServiceProvider();
 
-        var engine = provider.GetServices<IHostedService>().OfType<Engine>().First();
+        var engine = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await engine.StartAsync(CancellationToken.None);
 
         // Act
@@ -62,7 +62,7 @@ public class EngineTimeoutTests
         FastHandler.Reset();
         var provider = services.BuildServiceProvider();
 
-        var engine = provider.GetServices<IHostedService>().OfType<Engine>().First();
+        var engine = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await engine.StartAsync(CancellationToken.None);
 
         // Act
