@@ -1,4 +1,5 @@
 ﻿using System.Threading.Channels;
+using MsgFlux.Abstractions;
 using MsgFlux.Core.RxTx;
 using NUnit.Framework;
 

@@ -1,6 +1,7 @@
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using MsgFlux.Abstractions;
 using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
 

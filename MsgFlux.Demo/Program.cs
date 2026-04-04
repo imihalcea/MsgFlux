@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using MsgFlux.Abstractions;
 using MsgFlux.Core;
 
 var builder = WebApplication.CreateBuilder(args);

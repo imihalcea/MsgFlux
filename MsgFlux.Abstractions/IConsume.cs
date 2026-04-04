@@ -1,4 +1,4 @@
-namespace MsgFlux.Core;
+namespace MsgFlux.Abstractions;
 
 public interface IConsume<in T>
 {

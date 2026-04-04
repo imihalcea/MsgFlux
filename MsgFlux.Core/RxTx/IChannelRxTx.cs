@@ -1,4 +1,5 @@
 ﻿using System.Threading.Channels;
+using MsgFlux.Abstractions;
 
 namespace MsgFlux.Core.RxTx;
 

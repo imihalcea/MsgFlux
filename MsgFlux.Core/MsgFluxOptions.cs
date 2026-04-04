@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using MsgFlux.Core.Serialization;
+using MsgFlux.Abstractions;
 
 namespace MsgFlux.Core;
 

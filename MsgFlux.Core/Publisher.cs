@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using MsgFlux.Abstractions;
 using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
 

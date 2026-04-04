@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using MsgFlux.Abstractions;
 using NUnit.Framework;
 
 namespace MsgFlux.Core.Tests;
