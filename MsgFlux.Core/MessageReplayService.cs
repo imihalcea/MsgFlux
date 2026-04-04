@@ -2,7 +2,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MsgFlux.Abstractions;
 using MsgFlux.Core.RxTx;
-using MsgFlux.Core.Serialization;
 
 namespace MsgFlux.Core;
 
@@ -19,23 +18,28 @@ public partial class MessageReplayService(
 
         if (messageTypes.Count == 0) return;
 
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await ReplayCycleAsync(messageTypes, stoppingToken);
+            await Task.Delay(options.ReplayInterval, stoppingToken);
+        }
+    }
+
+    private async Task ReplayCycleAsync(Dictionary<string, Type> messageTypes, CancellationToken ct)
+    {
         var messages = await messageStore.FetchUnprocessedAsync(
             messageType: null,
             maxCount: 1000,
             staleProcessingTimeout: options.StaleProcessingTimeout,
-            ct: stoppingToken);
+            ct: ct);
 
-        if (messages.Count == 0)
-        {
-            LogNoMessagesToReplay(logger);
-            return;
-        }
+        if (messages.Count == 0) return;
 
         LogReplayingMessages(logger, messages.Count);
 
         foreach (var message in messages)
         {
-            if (stoppingToken.IsCancellationRequested) break;
+            if (ct.IsCancellationRequested) break;
 
             if (!messageTypes.TryGetValue(message.MessageType, out var type))
             {
@@ -43,11 +47,10 @@ public partial class MessageReplayService(
                 continue;
             }
 
-            // Dead-letter messages that exceeded max retries
             if (message.RetryCount >= options.MaxDeadLetterRetries)
             {
                 await messageStore.DeadLetterAsync(message.MessageId,
-                    $"Max retries ({options.MaxDeadLetterRetries}) exceeded", stoppingToken);
+                    $"Max retries ({options.MaxDeadLetterRetries}) exceeded", ct);
                 LogMessageDeadLettered(logger, message.MessageId);
                 continue;
             }
@@ -59,13 +62,10 @@ public partial class MessageReplayService(
                 MessageType: message.MessageType);
 
             var writer = channelRxTx.GetWriter(type);
-            await writer.WriteAsync(envelope, stoppingToken);
+            await writer.WriteAsync(envelope, ct);
             LogMessageReplayed(logger, message.MessageId, message.MessageType);
         }
     }
-
-    [LoggerMessage(LogLevel.Information, "No unprocessed messages to replay")]
-    static partial void LogNoMessagesToReplay(ILogger logger);
 
     [LoggerMessage(LogLevel.Information, "Replaying {Count} unprocessed messages")]
     static partial void LogReplayingMessages(ILogger logger, int count);

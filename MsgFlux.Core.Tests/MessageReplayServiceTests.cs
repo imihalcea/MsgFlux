@@ -57,6 +57,60 @@ public class MessageReplayServiceTests
         await engine.StopAsync(CancellationToken.None);
     }
 
+    [Test]
+    public async Task ReplayService_Should_Retry_Failed_Messages_Periodically()
+    {
+        // Arrange
+        var store = new InMemoryMessageStore();
+        var serializer = new JsonSerializer();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddMsgFlux(options =>
+        {
+            options
+                .WithDurability()
+                .WithReplayInterval(TimeSpan.FromMilliseconds(100))
+                .AddConsumer<ReplayTestHandler>();
+        });
+        services.AddSingleton<IMessageStore>(store);
+
+        ReplayTestHandler.Reset();
+        var provider = services.BuildServiceProvider();
+
+        // Start Engine first
+        var engine = provider.GetServices<IHostedService>().OfType<Engine>().First();
+        await engine.StartAsync(CancellationToken.None);
+
+        // Start replay service
+        var replayService = provider.GetServices<IHostedService>().OfType<MessageReplayService>().First();
+        await replayService.StartAsync(CancellationToken.None);
+
+        // Simulate a message that was persisted and marked as Failed (e.g. after a timeout)
+        var payload = serializer.Serialize(new ReplayTestMessage { Data = "RetryMe" });
+        var failed = new PersistedMessage
+        {
+            MessageId = Guid.NewGuid().ToString(),
+            Payload = payload,
+            Headers = new Dictionary<string, string>(),
+            MessageType = nameof(ReplayTestMessage),
+            State = MessageState.Pending,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        await store.PersistAsync(failed);
+        await store.MarkAsFailedAsync(failed.MessageId, "simulated failure");
+
+        // Wait for replay cycle to pick it up (interval = 100ms)
+        await Task.Delay(500);
+
+        // Assert — message was replayed and processed by the consumer
+        Assert.That(ReplayTestHandler.HandledCount, Is.GreaterThanOrEqualTo(1));
+        Assert.That(ReplayTestHandler.LastData, Is.EqualTo("RetryMe"));
+
+        await engine.StopAsync(CancellationToken.None);
+        await replayService.StopAsync(CancellationToken.None);
+    }
+
     public class ReplayTestMessage
     {
         public string Data { get; set; } = string.Empty;

@@ -13,6 +13,7 @@ public class MsgFluxOptions
     public int MaxDeadLetterRetries { get; set; } = 3;
     public TimeSpan PurgeOlderThan { get; set; } = TimeSpan.FromDays(7);
     public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromHours(1);
+    public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     internal List<Action<IServiceCollection, Registry>> ConsumerRegistrations { get; } = new();
 
@@ -50,6 +51,12 @@ public class MsgFluxOptions
     {
         PurgeOlderThan = olderThan;
         PurgeInterval = interval;
+        return this;
+    }
+
+    public MsgFluxOptions WithReplayInterval(TimeSpan interval)
+    {
+        ReplayInterval = interval;
         return this;
     }
 
