@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -125,8 +124,8 @@ public partial class Engine : BackgroundService
         }
 
         using var scope = _serviceProvider.CreateScope();
-        var consumerType = typeof(IConsume<>).MakeGenericType(messageType);
-        var consumers = scope.ServiceProvider.GetServices(consumerType).ToArray();
+        var consumerServiceType = _registry.GetConsumerServiceType(messageType);
+        var consumers = scope.ServiceProvider.GetServices(consumerServiceType).ToArray();
 
         if (consumers.Length == 0)
         {
@@ -159,10 +158,11 @@ public partial class Engine : BackgroundService
         var parentContext = ExtractContext(envelope.Headers);
         using var activity = ActivitySource.StartActivity("MsgFlux.Dispatch", ActivityKind.Consumer, parentContext);
 
+        var invoker = _registry.GetInvoker(messageType);
         var results = new List<Task<bool>>(consumers.Length);
         foreach (var consumer in consumers)
         {
-            if (consumer != null) results.Add(SafeExecuteConsumerAsync(consumer, message, consumerType, ct));
+            if (consumer != null) results.Add(SafeExecuteConsumerAsync(consumer, message, invoker, ct));
         }
 
         await Task.WhenAll(results);
@@ -185,7 +185,7 @@ public partial class Engine : BackgroundService
     private async Task<bool> SafeExecuteConsumerAsync(
         object consumer,
         object message,
-        Type consumerType,
+        Func<object, object, CancellationToken, Task> invoker,
         CancellationToken ct)
     {
         var consumerName = consumer.GetType().Name;
@@ -193,22 +193,7 @@ public partial class Engine : BackgroundService
         {
             await _pipeline.ExecuteAsync(async token =>
             {
-                var method = consumerType.GetMethod("HandleAsync");
-                if (method != null)
-                {
-                    try
-                    {
-                        await (Task)method.Invoke(consumer, [message, token])!;
-                    }
-                    catch (TargetInvocationException ex)
-                    {
-                        if (ex.InnerException != null)
-                        {
-                            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
-                        }
-                        throw;
-                    }
-                }
+                await invoker(consumer, message, token);
             }, ct);
             return true;
         }
