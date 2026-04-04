@@ -87,24 +87,18 @@ public partial class Engine : BackgroundService
             {
                 try
                 {
-                    if (_messageStore != null)
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    timeoutCts.CancelAfter(_options.StaleProcessingTimeout);
+                    try
                     {
-                        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                        timeoutCts.CancelAfter(_options.StaleProcessingTimeout);
-                        try
-                        {
-                            await DispatchAsync(envelope, messageType, timeoutCts.Token);
-                        }
-                        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !token.IsCancellationRequested)
-                        {
-                            LogProcessingTimeout(_logger, envelope.MessageId, _options.StaleProcessingTimeout);
+                        await DispatchAsync(envelope, messageType, timeoutCts.Token);
+                    }
+                    catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !token.IsCancellationRequested)
+                    {
+                        LogProcessingTimeout(_logger, envelope.MessageId, _options.StaleProcessingTimeout);
+                        if (_messageStore != null)
                             await _messageStore.MarkAsFailedAsync(envelope.MessageId,
                                 $"Processing timed out after {_options.StaleProcessingTimeout}", token);
-                        }
-                    }
-                    else
-                    {
-                        await DispatchAsync(envelope, messageType, token);
                     }
                 }
                 catch (Exception ex)
