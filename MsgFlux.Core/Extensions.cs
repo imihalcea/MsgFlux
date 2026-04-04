@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using MsgFlux.Core.RxTx;
@@ -16,9 +15,19 @@ public static class Extensions
 
         services.AddSingleton<IChannelRxTx, InMemoryRxTx>();
         services.AddSingleton<ISerializer, JsonSerializer>();
-        services.AddSingleton<IPublish, Publisher>();
+
+        if (options.DurabilityEnabled)
+        {
+            services.AddSingleton<IPublish, DurablePublisher>();
+            services.AddHostedService<MessageReplayService>();
+        }
+        else
+        {
+            services.AddSingleton<IPublish, Publisher>();
+        }
+
         services.AddHostedService<Engine>();
-        
+
         var registry = new Registry();
         services.AddSingleton(registry);
 

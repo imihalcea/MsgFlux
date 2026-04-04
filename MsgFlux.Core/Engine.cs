@@ -3,6 +3,7 @@ using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MsgFlux.Abstractions;
 using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
 using Polly;
@@ -21,6 +22,7 @@ public partial class Engine : BackgroundService
     private readonly List<Task> _processingTasks = new();
     private readonly ResiliencePipeline _pipeline;
     private readonly MsgFluxOptions _options;
+    private readonly IMessageStore? _messageStore;
 
     public Engine(
         IServiceProvider serviceProvider,
@@ -28,7 +30,8 @@ public partial class Engine : BackgroundService
         ISerializer serializer,
         Registry registry,
         ILogger<Engine> logger,
-        MsgFluxOptions options)
+        MsgFluxOptions options,
+        IMessageStore? messageStore = null)
     {
         _serviceProvider = serviceProvider;
         _channelRxTx = channelRxTx;
@@ -36,6 +39,7 @@ public partial class Engine : BackgroundService
         _registry = registry;
         _logger = logger;
         _options = options;
+        _messageStore = messageStore;
 
         _pipeline = new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
@@ -103,25 +107,39 @@ public partial class Engine : BackgroundService
 
     private async Task DispatchAsync(Envelope envelope, Type messageType, CancellationToken ct)
     {
+        if (_messageStore != null)
+        {
+            await _messageStore.MarkAsProcessingAsync(envelope.MessageId, ct);
+        }
+
         using var scope = _serviceProvider.CreateScope();
         var consumerType = typeof(IConsume<>).MakeGenericType(messageType);
         var consumers = scope.ServiceProvider.GetServices(consumerType).ToArray();
-        
-        if (consumers.Length == 0) return;
+
+        if (consumers.Length == 0)
+        {
+            if (_messageStore != null)
+                await _messageStore.AcknowledgeAsync(envelope.MessageId, ct);
+            return;
+        }
 
         object? message;
-        try 
+        try
         {
             message = _serializer.Deserialize(envelope.Payload, messageType);
-            if (message == null) 
+            if (message == null)
             {
                 LogDeserializationError(_logger, messageType.Name);
+                if (_messageStore != null)
+                    await _messageStore.MarkAsFailedAsync(envelope.MessageId, "Deserialization returned null", ct);
                 return;
             }
         }
         catch (Exception ex)
         {
             LogDeserializationException(_logger, messageType.Name, ex);
+            if (_messageStore != null)
+                await _messageStore.MarkAsFailedAsync(envelope.MessageId, ex.Message, ct);
             return;
         }
 
@@ -129,19 +147,33 @@ public partial class Engine : BackgroundService
         var parentContext = ExtractContext(envelope.Headers);
         using var activity = ActivitySource.StartActivity("MsgFlux.Dispatch", ActivityKind.Consumer, parentContext);
 
-        var tasks = new List<Task>(consumers.Length);
+        var results = new List<Task<bool>>(consumers.Length);
         foreach (var consumer in consumers)
         {
-            if (consumer != null) tasks.Add(SafeExecuteConsumerAsync(consumer, message, consumerType, ct));
+            if (consumer != null) results.Add(SafeExecuteConsumerAsync(consumer, message, consumerType, ct));
         }
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(results);
+
+        if (_messageStore != null)
+        {
+            var allSucceeded = results.All(t => t.Result);
+            if (allSucceeded)
+            {
+                await _messageStore.AcknowledgeAsync(envelope.MessageId, ct);
+            }
+            else
+            {
+                await _messageStore.MarkAsFailedAsync(envelope.MessageId,
+                    "One or more consumers failed after retries", ct);
+            }
+        }
     }
 
-    private async Task SafeExecuteConsumerAsync(
-        object consumer, 
-        object message, 
-        Type consumerType, 
+    private async Task<bool> SafeExecuteConsumerAsync(
+        object consumer,
+        object message,
+        Type consumerType,
         CancellationToken ct)
     {
         var consumerName = consumer.GetType().Name;
@@ -152,7 +184,7 @@ public partial class Engine : BackgroundService
                 var method = consumerType.GetMethod("HandleAsync");
                 if (method != null)
                 {
-                    try 
+                    try
                     {
                         await (Task)method.Invoke(consumer, [message, token])!;
                     }
@@ -166,11 +198,13 @@ public partial class Engine : BackgroundService
                     }
                 }
             }, ct);
+            return true;
         }
         catch (Exception ex)
         {
-             LogConsumerError(_logger, consumerName, ex);
-             Activity.Current?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            LogConsumerError(_logger, consumerName, ex);
+            Activity.Current?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return false;
         }
     }
 
@@ -207,4 +241,7 @@ public partial class Engine : BackgroundService
 
     [LoggerMessage(LogLevel.Warning, "Retry attempt {attemptNumber} due to: {errorMessage}")]
     static partial void LogRetryAttempt(ILogger<Engine> logger, int attemptNumber, string errorMessage);
+
+    [LoggerMessage(LogLevel.Warning, "Message {messageId} moved to dead-letter")]
+    static partial void LogMessageDeadLettered(ILogger<Engine> logger, string messageId);
 }
