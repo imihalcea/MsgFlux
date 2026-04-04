@@ -20,6 +20,7 @@ public static class Extensions
         {
             services.AddSingleton<IPublish, DurablePublisher>();
             services.AddHostedService<MessageReplayService>();
+            services.AddHostedService<MessagePurgeService>();
         }
         else
         {

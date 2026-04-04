@@ -11,6 +11,8 @@ public class MsgFluxOptions
     public bool DurabilityEnabled { get; internal set; }
     public TimeSpan StaleProcessingTimeout { get; set; } = TimeSpan.FromMinutes(5);
     public int MaxDeadLetterRetries { get; set; } = 3;
+    public TimeSpan PurgeOlderThan { get; set; } = TimeSpan.FromDays(7);
+    public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromHours(1);
 
     internal List<Action<IServiceCollection, Registry>> ConsumerRegistrations { get; } = new();
 
@@ -41,6 +43,13 @@ public class MsgFluxOptions
     public MsgFluxOptions WithStaleProcessingTimeout(TimeSpan timeout)
     {
         StaleProcessingTimeout = timeout;
+        return this;
+    }
+
+    public MsgFluxOptions WithPurge(TimeSpan olderThan, TimeSpan interval)
+    {
+        PurgeOlderThan = olderThan;
+        PurgeInterval = interval;
         return this;
     }
 
