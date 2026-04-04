@@ -87,7 +87,25 @@ public partial class Engine : BackgroundService
             {
                 try
                 {
-                    await DispatchAsync(envelope, messageType, token);
+                    if (_messageStore != null)
+                    {
+                        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                        timeoutCts.CancelAfter(_options.StaleProcessingTimeout);
+                        try
+                        {
+                            await DispatchAsync(envelope, messageType, timeoutCts.Token);
+                        }
+                        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !token.IsCancellationRequested)
+                        {
+                            LogProcessingTimeout(_logger, envelope.MessageId, _options.StaleProcessingTimeout);
+                            await _messageStore.MarkAsFailedAsync(envelope.MessageId,
+                                $"Processing timed out after {_options.StaleProcessingTimeout}", token);
+                        }
+                    }
+                    else
+                    {
+                        await DispatchAsync(envelope, messageType, token);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -200,6 +218,10 @@ public partial class Engine : BackgroundService
             }, ct);
             return true;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             LogConsumerError(_logger, consumerName, ex);
@@ -244,4 +266,7 @@ public partial class Engine : BackgroundService
 
     [LoggerMessage(LogLevel.Warning, "Message {messageId} moved to dead-letter")]
     static partial void LogMessageDeadLettered(ILogger<Engine> logger, string messageId);
+
+    [LoggerMessage(LogLevel.Warning, "Message {messageId} processing timed out after {timeout}")]
+    static partial void LogProcessingTimeout(ILogger<Engine> logger, string messageId, TimeSpan timeout);
 }
