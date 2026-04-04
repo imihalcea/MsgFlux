@@ -21,7 +21,7 @@ public partial class Engine : BackgroundService
     private readonly List<Task> _processingTasks = new();
     private readonly ResiliencePipeline _pipeline;
     private readonly MsgFluxOptions _options;
-    private readonly IMessageStore? _messageStore;
+    private readonly IMessageStore _messageStore;
 
     public Engine(
         IServiceProvider serviceProvider,
@@ -38,7 +38,7 @@ public partial class Engine : BackgroundService
         _registry = registry;
         _logger = logger;
         _options = options;
-        _messageStore = messageStore;
+        _messageStore = messageStore ?? NoOpMessageStore.Instance;
 
         _pipeline = new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
@@ -97,9 +97,8 @@ public partial class Engine : BackgroundService
                         LogProcessingTimeout(_logger, envelope.MessageId, _options.StaleProcessingTimeout);
                         try
                         {
-                            if (_messageStore != null)
-                                await _messageStore.MarkAsFailedAsync(envelope.MessageId,
-                                    $"Processing timed out after {_options.StaleProcessingTimeout}", token);
+                            await _messageStore.MarkAsFailedAsync(envelope.MessageId,
+                                $"Processing timed out after {_options.StaleProcessingTimeout}", token);
                         }
                         catch (Exception storeEx)
                         {
@@ -127,8 +126,7 @@ public partial class Engine : BackgroundService
     {
         try
         {
-            if (_messageStore != null)
-                await _messageStore.MarkAsProcessingAsync(envelope.MessageId, ct);
+            await _messageStore.MarkAsProcessingAsync(envelope.MessageId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -143,8 +141,7 @@ public partial class Engine : BackgroundService
         {
             try
             {
-                if (_messageStore != null)
-                    await _messageStore.AcknowledgeAsync(envelope.MessageId, ct);
+                await _messageStore.AcknowledgeAsync(envelope.MessageId, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -162,8 +159,7 @@ public partial class Engine : BackgroundService
                 LogDeserializationError(_logger, messageType.Name);
                 try
                 {
-                    if (_messageStore != null)
-                        await _messageStore.MarkAsFailedAsync(envelope.MessageId, "Deserialization returned null", ct);
+                    await _messageStore.MarkAsFailedAsync(envelope.MessageId, "Deserialization returned null", ct);
                 }
                 catch (Exception storeEx) when (storeEx is not OperationCanceledException)
                 {
@@ -177,8 +173,7 @@ public partial class Engine : BackgroundService
             LogDeserializationException(_logger, messageType.Name, ex);
             try
             {
-                if (_messageStore != null)
-                    await _messageStore.MarkAsFailedAsync(envelope.MessageId, ex.Message, ct);
+                await _messageStore.MarkAsFailedAsync(envelope.MessageId, ex.Message, ct);
             }
             catch (Exception storeEx) when (storeEx is not OperationCanceledException)
             {
@@ -200,25 +195,22 @@ public partial class Engine : BackgroundService
 
         var results = await Task.WhenAll(tasks);
 
-        if (_messageStore != null)
+        try
         {
-            try
+            var allSucceeded = results.All(r=>r);
+            if (allSucceeded)
             {
-                var allSucceeded = results.All(r=>r);
-                if (allSucceeded)
-                {
-                    await _messageStore.AcknowledgeAsync(envelope.MessageId, ct);
-                }
-                else
-                {
-                    await _messageStore.MarkAsFailedAsync(envelope.MessageId,
-                        "One or more consumers failed after retries", ct);
-                }
+                await _messageStore.AcknowledgeAsync(envelope.MessageId, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            else
             {
-                LogMessageStoreError(_logger, envelope.MessageId, "AcknowledgeAsync/MarkAsFailedAsync (post-dispatch)", ex);
+                await _messageStore.MarkAsFailedAsync(envelope.MessageId,
+                    "One or more consumers failed after retries", ct);
             }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogMessageStoreError(_logger, envelope.MessageId, "AcknowledgeAsync/MarkAsFailedAsync (post-dispatch)", ex);
         }
     }
 
