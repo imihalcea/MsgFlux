@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MsgFlux.Core\MsgFlux.Core.csproj" />
+    <ProjectReference Include="..\MsgFlux.Abstractions\MsgFlux.Abstractions.csproj" />
   </ItemGroup>
 
 </Project>
