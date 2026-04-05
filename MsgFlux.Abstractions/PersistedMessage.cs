@@ -3,6 +3,10 @@ namespace MsgFlux.Abstractions;
 public record PersistedMessage
 {
     public required string MessageId { get; init; }
+    /// <summary>
+    /// Stable hash of the target consumer's concrete type FullName. One row per (MessageId, ConsumerId).
+    /// </summary>
+    public required string ConsumerId { get; init; }
     public required byte[] Payload { get; init; }
     public required Dictionary<string, string> Headers { get; init; }
     public required string MessageType { get; init; }

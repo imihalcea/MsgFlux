@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using MsgFlux.Abstractions;
-using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
 
 namespace MsgFlux.Core.Tests;
@@ -17,25 +16,26 @@ public class MessageReplayServiceTests
 
         // Pre-persist a message as if it was saved before a crash
         var payload = serializer.Serialize(new ReplayTestMessage { Data = "Replayed" });
+        var consumerId = Registry.GetConsumerId(typeof(ReplayTestHandler));
         var persisted = new PersistedMessage
         {
             MessageId = Guid.NewGuid().ToString(),
+            ConsumerId = consumerId,
             Payload = payload,
             Headers = new Dictionary<string, string>(),
             MessageType = nameof(ReplayTestMessage),
             State = MessageState.Pending,
             CreatedAt = DateTimeOffset.UtcNow
         };
-        await store.PersistAsync(persisted);
+        await store.PersistAsync(new[] { persisted });
 
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
-            options.WithDurability();
-            options.AddConsumer<ReplayTestHandler>();
+            options.AddConsumer<ReplayTestHandler>(Semantics.AtLeastOnce);
         });
-        services.AddSingleton<IMessageStore>(store);
 
         ReplayTestHandler.Reset();
         var provider = services.BuildServiceProvider();
@@ -66,14 +66,13 @@ public class MessageReplayServiceTests
 
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
             options
-                .WithDurability()
                 .WithReplayInterval(TimeSpan.FromMilliseconds(100))
-                .AddConsumer<ReplayTestHandler>();
+                .AddConsumer<ReplayTestHandler>(Semantics.AtLeastOnce);
         });
-        services.AddSingleton<IMessageStore>(store);
 
         ReplayTestHandler.Reset();
         var provider = services.BuildServiceProvider();
@@ -88,17 +87,19 @@ public class MessageReplayServiceTests
 
         // Simulate a message that was persisted and marked as Failed (e.g. after a timeout)
         var payload = serializer.Serialize(new ReplayTestMessage { Data = "RetryMe" });
+        var consumerId = Registry.GetConsumerId(typeof(ReplayTestHandler));
         var failed = new PersistedMessage
         {
             MessageId = Guid.NewGuid().ToString(),
+            ConsumerId = consumerId,
             Payload = payload,
             Headers = new Dictionary<string, string>(),
             MessageType = nameof(ReplayTestMessage),
             State = MessageState.Pending,
             CreatedAt = DateTimeOffset.UtcNow
         };
-        await store.PersistAsync(failed);
-        await store.MarkAsFailedAsync(failed.MessageId, "simulated failure");
+        await store.PersistAsync(new[] { failed });
+        await store.MarkAsFailedAsync(failed.MessageId, consumerId, "simulated failure");
 
         // Wait for replay cycle to pick it up (interval = 100ms)
         await Task.Delay(500);

@@ -74,8 +74,6 @@ public partial class EngineService : BackgroundService
 
         try
         {
-            // Use Parallel.ForEachAsync to process messages concurrently
-            // MaxDegreeOfParallelism can be configured via options or defaulted to ProcessorCount
             var parallelOptions = new ParallelOptions
             {
                 CancellationToken = ct,
@@ -88,17 +86,11 @@ public partial class EngineService : BackgroundService
                 {
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
                     timeoutCts.CancelAfter(_options.StaleProcessingTimeout);
-                    try
-                    {
-                        await DispatchAsync(envelope, messageType, timeoutCts.Token);
-                    }
-                    catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !token.IsCancellationRequested)
-                    {
-                        LogProcessingTimeout(_logger, envelope.MessageId, _options.StaleProcessingTimeout);
-                        await SafeStoreOperationAsync(envelope.MessageId, "MarkAsFailedAsync (timeout)",
-                            () => _messageStore.MarkAsFailedAsync(envelope.MessageId,
-                                $"Processing timed out after {_options.StaleProcessingTimeout}", token));
-                    }
+                    await DispatchAsync(envelope, messageType, timeoutCts.Token, token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    // Engine is shutting down — swallow.
                 }
                 catch (Exception ex)
                 {
@@ -112,48 +104,108 @@ public partial class EngineService : BackgroundService
         }
         catch (Exception ex)
         {
-             LogChannelLoopError(_logger, messageType.Name, ex);
+            LogChannelLoopError(_logger, messageType.Name, ex);
         }
     }
 
-    private async Task DispatchAsync(Envelope envelope, Type messageType, CancellationToken ct)
+    private async Task DispatchAsync(Envelope envelope, Type messageType, CancellationToken dispatchToken, CancellationToken engineToken)
     {
-        await SafeStoreOperationAsync(envelope.MessageId, "MarkAsProcessingAsync",
-            () => _messageStore.MarkAsProcessingAsync(envelope.MessageId, ct));
+        var registrations = _registry.GetConsumers(messageType);
+        if (registrations.Count == 0) return;
 
-        using var scope = _serviceProvider.CreateScope();
-        var consumers = ResolveConsumers(scope, messageType);
+        // Selective dispatch: if TargetConsumerId is set, filter to that single consumer (replay path).
+        var targeted = envelope.TargetConsumerId is not null
+            ? registrations.Where(r => r.ConsumerId == envelope.TargetConsumerId).ToArray()
+            : registrations.ToArray();
 
-        if (consumers.Length == 0)
-        {
-            await SafeStoreOperationAsync(envelope.MessageId, "AcknowledgeAsync",
-                () => _messageStore.AcknowledgeAsync(envelope.MessageId, ct));
-            return;
-        }
+        if (targeted.Length == 0) return;
 
         var message = DeserializeMessage(envelope, messageType);
         if (message == null)
         {
-            await SafeStoreOperationAsync(envelope.MessageId, "MarkAsFailedAsync",
-                () => _messageStore.MarkAsFailedAsync(envelope.MessageId, "Deserialization failed", ct));
+            // Deserialization failed → mark only the AtLeastOnce slices as failed.
+            foreach (var reg in targeted.Where(r => r.Semantics == Semantics.AtLeastOnce))
+            {
+                await SafeStoreOperationAsync(envelope.MessageId, reg.ConsumerId, "MarkAsFailedAsync (deserialize)",
+                    () => _messageStore.MarkAsFailedAsync(envelope.MessageId, reg.ConsumerId, "Deserialization failed", engineToken));
+            }
             return;
         }
 
         var parentContext = ExtractContext(envelope.Headers);
         using var activity = ActivitySource.StartActivity("MsgFlux.Dispatch", ActivityKind.Consumer, parentContext);
 
-        var allSucceeded = await ExecuteConsumersAsync(consumers, message, messageType, ct);
+        using var scope = _serviceProvider.CreateScope();
+        var instancesByType = ResolveConsumerInstances(scope, messageType);
+        var invoker = _registry.GetInvoker(messageType);
 
-        await SafeStoreOperationAsync(envelope.MessageId, allSucceeded ? "AcknowledgeAsync" : "MarkAsFailedAsync",
-            () => allSucceeded
-                ? _messageStore.AcknowledgeAsync(envelope.MessageId, ct)
-                : _messageStore.MarkAsFailedAsync(envelope.MessageId, "One or more consumers failed after retries", ct));
+        var tasks = new List<Task>(targeted.Length);
+        foreach (var reg in targeted)
+        {
+            if (!instancesByType.TryGetValue(reg.ConsumerType, out var instance)) continue;
+            tasks.Add(DispatchToConsumerAsync(envelope, reg, instance, message, invoker, dispatchToken, engineToken));
+        }
+        await Task.WhenAll(tasks);
     }
 
-    private object?[] ResolveConsumers(IServiceScope scope, Type messageType)
+    private async Task DispatchToConsumerAsync(
+        Envelope envelope,
+        ConsumerRegistration reg,
+        object instance,
+        object message,
+        Func<object, object, CancellationToken, Task> invoker,
+        CancellationToken dispatchToken,
+        CancellationToken engineToken)
+    {
+        var isDurable = reg.Semantics == Semantics.AtLeastOnce;
+
+        if (isDurable)
+        {
+            await SafeStoreOperationAsync(envelope.MessageId, reg.ConsumerId, "MarkAsProcessingAsync",
+                () => _messageStore.MarkAsProcessingAsync(envelope.MessageId, reg.ConsumerId, engineToken));
+        }
+
+        var outcome = await SafeExecuteConsumerAsync(instance, message, invoker, dispatchToken, engineToken);
+
+        if (!isDurable) return;
+
+        string op;
+        Func<Task> action;
+        switch (outcome)
+        {
+            case ConsumerOutcome.Success:
+                op = "AcknowledgeAsync";
+                action = () => _messageStore.AcknowledgeAsync(envelope.MessageId, reg.ConsumerId, engineToken);
+                break;
+            case ConsumerOutcome.TimedOut:
+                LogProcessingTimeout(_logger, envelope.MessageId, _options.StaleProcessingTimeout);
+                op = "MarkAsFailedAsync (timeout)";
+                action = () => _messageStore.MarkAsFailedAsync(envelope.MessageId, reg.ConsumerId,
+                    $"Processing timed out after {_options.StaleProcessingTimeout}", engineToken);
+                break;
+            default:
+                op = "MarkAsFailedAsync";
+                action = () => _messageStore.MarkAsFailedAsync(envelope.MessageId, reg.ConsumerId,
+                    "Consumer failed after retries", engineToken);
+                break;
+        }
+        await SafeStoreOperationAsync(envelope.MessageId, reg.ConsumerId, op, action);
+    }
+
+    private enum ConsumerOutcome { Success, Failed, TimedOut }
+
+    private Dictionary<Type, object> ResolveConsumerInstances(IServiceScope scope, Type messageType)
     {
         var consumerServiceType = _registry.GetConsumerServiceType(messageType);
-        return scope.ServiceProvider.GetServices(consumerServiceType).ToArray();
+        var services = scope.ServiceProvider.GetServices(consumerServiceType);
+        var map = new Dictionary<Type, object>();
+        foreach (var svc in services)
+        {
+            if (svc is null) continue;
+            // Last-write-wins if duplicates (shouldn't happen with registry dedup).
+            map[svc.GetType()] = svc;
+        }
+        return map;
     }
 
     private object? DeserializeMessage(Envelope envelope, Type messageType)
@@ -172,20 +224,7 @@ public partial class EngineService : BackgroundService
         }
     }
 
-    private async Task<bool> ExecuteConsumersAsync(object?[] consumers, object message, Type messageType, CancellationToken ct)
-    {
-        var invoker = _registry.GetInvoker(messageType);
-        var tasks = new List<Task<bool>>(consumers.Length);
-        foreach (var consumer in consumers)
-        {
-            if (consumer != null) tasks.Add(SafeExecuteConsumerAsync(consumer, message, invoker, ct));
-        }
-
-        var results = await Task.WhenAll(tasks);
-        return results.All(r => r);
-    }
-
-    private async Task SafeStoreOperationAsync(string messageId, string operation, Func<Task> action)
+    private async Task SafeStoreOperationAsync(string messageId, string consumerId, string operation, Func<Task> action)
     {
         try
         {
@@ -193,15 +232,16 @@ public partial class EngineService : BackgroundService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            LogMessageStoreError(_logger, messageId, operation, ex);
+            LogMessageStoreError(_logger, messageId, consumerId, operation, ex);
         }
     }
 
-    private async Task<bool> SafeExecuteConsumerAsync(
+    private async Task<ConsumerOutcome> SafeExecuteConsumerAsync(
         object consumer,
         object message,
         Func<object, object, CancellationToken, Task> invoker,
-        CancellationToken ct)
+        CancellationToken dispatchToken,
+        CancellationToken engineToken)
     {
         var consumerName = consumer.GetType().Name;
         try
@@ -209,18 +249,24 @@ public partial class EngineService : BackgroundService
             await _pipeline.ExecuteAsync(async token =>
             {
                 await invoker(consumer, message, token);
-            }, ct);
-            return true;
+            }, dispatchToken);
+            return ConsumerOutcome.Success;
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (engineToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException) when (dispatchToken.IsCancellationRequested)
+        {
+            // Dispatch token cancelled but engine still running → timeout.
+            Activity.Current?.SetStatus(ActivityStatusCode.Error, "timeout");
+            return ConsumerOutcome.TimedOut;
         }
         catch (Exception ex)
         {
             LogConsumerError(_logger, consumerName, ex);
             Activity.Current?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            return false;
+            return ConsumerOutcome.Failed;
         }
     }
 
@@ -245,7 +291,7 @@ public partial class EngineService : BackgroundService
 
     [LoggerMessage(LogLevel.Critical, "Critical error in channel loop for {messageType}")]
     static partial void LogChannelLoopError(ILogger<EngineService> logger, string messageType, Exception ex);
-    
+
     [LoggerMessage(LogLevel.Error, "Failed to deserialize message of type {messageType}")]
     static partial void LogDeserializationError(ILogger<EngineService> logger, string messageType);
 
@@ -258,12 +304,9 @@ public partial class EngineService : BackgroundService
     [LoggerMessage(LogLevel.Warning, "Retry attempt {attemptNumber} due to: {errorMessage}")]
     static partial void LogRetryAttempt(ILogger<EngineService> logger, int attemptNumber, string errorMessage);
 
-    [LoggerMessage(LogLevel.Warning, "Message {messageId} moved to dead-letter")]
-    static partial void LogMessageDeadLettered(ILogger<EngineService> logger, string messageId);
-
     [LoggerMessage(LogLevel.Warning, "Message {messageId} processing timed out after {timeout}")]
     static partial void LogProcessingTimeout(ILogger<EngineService> logger, string messageId, TimeSpan timeout);
 
-    [LoggerMessage(LogLevel.Error, "Message store operation failed for message {messageId}: {operation}")]
-    static partial void LogMessageStoreError(ILogger<EngineService> logger, string messageId, string operation, Exception ex);
+    [LoggerMessage(LogLevel.Error, "Message store operation failed for message {messageId} / consumer {consumerId}: {operation}")]
+    static partial void LogMessageStoreError(ILogger<EngineService> logger, string messageId, string consumerId, string operation, Exception ex);
 }

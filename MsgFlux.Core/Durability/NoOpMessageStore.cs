@@ -6,19 +6,19 @@ public sealed class NoOpMessageStore : IMessageStore
 {
     public static readonly NoOpMessageStore Instance = new();
 
-    public Task<string> PersistAsync(PersistedMessage message, CancellationToken ct = default) =>
-        Task.FromResult(string.Empty);
-
-    public Task MarkAsProcessingAsync(string messageId, CancellationToken ct = default) =>
+    public Task PersistAsync(IReadOnlyList<PersistedMessage> messages, CancellationToken ct = default) =>
         Task.CompletedTask;
 
-    public Task AcknowledgeAsync(string messageId, CancellationToken ct = default) =>
+    public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default) =>
         Task.CompletedTask;
 
-    public Task MarkAsFailedAsync(string messageId, string errorDetails, CancellationToken ct = default) =>
+    public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default) =>
         Task.CompletedTask;
 
-    public Task DeadLetterAsync(string messageId, string reason, CancellationToken ct = default) =>
+    public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default) =>
         Task.CompletedTask;
 
     public Task<IReadOnlyList<PersistedMessage>> FetchUnprocessedAsync(

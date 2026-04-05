@@ -11,7 +11,9 @@ public partial class SchemaInitializer(
 {
     private const string SchemaSql = """
         CREATE TABLE IF NOT EXISTS msgflux_messages (
-            message_id    TEXT         PRIMARY KEY,
+            id            BIGSERIAL    PRIMARY KEY,
+            message_id    TEXT         NOT NULL,
+            consumer_id   TEXT         NOT NULL,
             payload       BYTEA        NOT NULL,
             headers       JSONB        NOT NULL DEFAULT '{}',
             message_type  TEXT         NOT NULL,
@@ -19,11 +21,12 @@ public partial class SchemaInitializer(
             retry_count   INT          NOT NULL DEFAULT 0,
             error_details TEXT,
             created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
-            processed_at  TIMESTAMPTZ
+            processed_at  TIMESTAMPTZ,
+            UNIQUE (message_id, consumer_id)
         );
 
         CREATE INDEX IF NOT EXISTS ix_msgflux_unprocessed
-            ON msgflux_messages (state, message_type) WHERE state IN (0, 2, 3);
+            ON msgflux_messages (consumer_id, state, message_type, created_at) WHERE state IN (0, 1, 3);
         CREATE INDEX IF NOT EXISTS ix_msgflux_purge
             ON msgflux_messages (created_at) WHERE state = 2;
         """;

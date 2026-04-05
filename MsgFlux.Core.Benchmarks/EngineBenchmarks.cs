@@ -56,7 +56,7 @@ public class EngineBenchmarks
         _serviceProvider = services.BuildServiceProvider();
         
         var registry = _serviceProvider.GetRequiredService<Registry>();
-        registry.Register<BenchmarkMessage>();
+        registry.Register<BenchmarkMessage, BenchmarkConsumer>(Semantics.AtMostOnce);
 
         _engineService = _serviceProvider.GetRequiredService<EngineService>();
         _publisher = _serviceProvider.GetRequiredService<IPublish>();

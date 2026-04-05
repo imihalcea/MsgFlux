@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using MsgFlux.Abstractions;
 using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
@@ -17,7 +16,17 @@ public static class Extensions
         services.AddSingleton<IChannelRxTx, InMemoryRxTx>();
         services.AddSingleton<ISerializer, JsonSerializer>();
 
-        if (options.DurabilityEnabled)
+        var registry = new Registry();
+        services.AddSingleton(registry);
+
+        foreach (var registration in options.ConsumerRegistrations)
+        {
+            registration(services, registry);
+        }
+
+        var durabilityRequired = registry.HasAtLeastOnceConsumers();
+
+        if (durabilityRequired)
         {
             services.AddSingleton<IPublish, DurablePublisher>();
             services.AddHostedService<MessageReplayService>();
@@ -28,16 +37,8 @@ public static class Extensions
             services.AddSingleton<IPublish, Publisher>();
         }
 
+        services.AddHostedService(sp => new DurabilityValidator(registry, sp, durabilityRequired));
         services.AddHostedService<EngineService>();
-
-        var registry = new Registry();
-        services.AddSingleton(registry);
-
-        // Execute explicit consumer registrations
-        foreach (var registration in options.ConsumerRegistrations)
-        {
-            registration(services, registry);
-        }
 
         return services;
     }

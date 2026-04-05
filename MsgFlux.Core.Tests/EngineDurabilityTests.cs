@@ -13,12 +13,11 @@ public class EngineDurabilityTests
         var store = new InMemoryMessageStore();
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
-            options.WithDurability();
-            options.AddConsumer<SuccessHandler>();
+            options.AddConsumer<SuccessHandler>(Semantics.AtLeastOnce);
         });
-        services.AddSingleton<IMessageStore>(store);
 
         SuccessHandler.Reset();
         var provider = services.BuildServiceProvider();
@@ -46,12 +45,11 @@ public class EngineDurabilityTests
         var store = new InMemoryMessageStore();
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
-            options.WithDurability();
-            options.AddConsumer<FailingHandler>();
+            options.AddConsumer<FailingHandler>(Semantics.AtLeastOnce);
         });
-        services.AddSingleton<IMessageStore>(store);
 
         FailingHandler.Reset();
         var provider = services.BuildServiceProvider();

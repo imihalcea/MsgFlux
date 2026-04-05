@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using MsgFlux.Abstractions;
 using Npgsql;
@@ -6,80 +7,102 @@ namespace MsgFlux.Postgres;
 
 public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : IMessageStore
 {
-    public async Task<string> PersistAsync(PersistedMessage message, CancellationToken ct = default)
+    public async Task PersistAsync(IReadOnlyList<PersistedMessage> messages, CancellationToken ct = default)
     {
-        const string sql = """
-            INSERT INTO msgflux_messages (message_id, payload, headers, message_type, state, retry_count, created_at)
-            VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7)
-            ON CONFLICT (message_id) DO NOTHING
-            """;
+        if (messages.Count == 0) return;
 
-        await using var cmd = dataSource.CreateCommand(sql);
-        cmd.Parameters.AddWithValue(message.MessageId);
-        cmd.Parameters.AddWithValue(message.Payload);
-        cmd.Parameters.AddWithValue(JsonSerializer.Serialize(message.Headers));
-        cmd.Parameters.AddWithValue(message.MessageType);
-        cmd.Parameters.AddWithValue((short)message.State);
-        cmd.Parameters.AddWithValue(message.RetryCount);
-        cmd.Parameters.AddWithValue(message.CreatedAt);
+        // Build a single multi-VALUES insert. Good enough for small batches; will be replaced by COPY for bulk.
+        var sb = new StringBuilder(
+            "INSERT INTO msgflux_messages (message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at) VALUES ");
 
+        await using var cmd = dataSource.CreateCommand();
+        var paramIdx = 1;
+        for (var i = 0; i < messages.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append('(')
+              .Append('$').Append(paramIdx++).Append(", ")
+              .Append('$').Append(paramIdx++).Append(", ")
+              .Append('$').Append(paramIdx++).Append(", ")
+              .Append('$').Append(paramIdx++).Append("::jsonb, ")
+              .Append('$').Append(paramIdx++).Append(", ")
+              .Append('$').Append(paramIdx++).Append(", ")
+              .Append('$').Append(paramIdx++).Append(", ")
+              .Append('$').Append(paramIdx++).Append(')');
+
+            var m = messages[i];
+            cmd.Parameters.AddWithValue(m.MessageId);
+            cmd.Parameters.AddWithValue(m.ConsumerId);
+            cmd.Parameters.AddWithValue(m.Payload);
+            cmd.Parameters.AddWithValue(JsonSerializer.Serialize(m.Headers));
+            cmd.Parameters.AddWithValue(m.MessageType);
+            cmd.Parameters.AddWithValue((short)m.State);
+            cmd.Parameters.AddWithValue(m.RetryCount);
+            cmd.Parameters.AddWithValue(m.CreatedAt);
+        }
+        sb.Append(" ON CONFLICT (message_id, consumer_id) DO NOTHING");
+
+        cmd.CommandText = sb.ToString();
         await cmd.ExecuteNonQueryAsync(ct);
-        return message.MessageId;
     }
 
-    public async Task MarkAsProcessingAsync(string messageId, CancellationToken ct = default)
+    public async Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
     {
         const string sql = """
             UPDATE msgflux_messages SET state = $1, processed_at = $2
-            WHERE message_id = $3
+            WHERE message_id = $3 AND consumer_id = $4
             """;
 
         await using var cmd = dataSource.CreateCommand(sql);
         cmd.Parameters.AddWithValue((short)MessageState.Processing);
         cmd.Parameters.AddWithValue(clock.UtcNow);
         cmd.Parameters.AddWithValue(messageId);
+        cmd.Parameters.AddWithValue(consumerId);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task AcknowledgeAsync(string messageId, CancellationToken ct = default)
+    public async Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
     {
         const string sql = """
             UPDATE msgflux_messages SET state = $1, processed_at = $2
-            WHERE message_id = $3
+            WHERE message_id = $3 AND consumer_id = $4
             """;
 
         await using var cmd = dataSource.CreateCommand(sql);
         cmd.Parameters.AddWithValue((short)MessageState.Completed);
         cmd.Parameters.AddWithValue(clock.UtcNow);
         cmd.Parameters.AddWithValue(messageId);
+        cmd.Parameters.AddWithValue(consumerId);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task MarkAsFailedAsync(string messageId, string errorDetails, CancellationToken ct = default)
+    public async Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
     {
         const string sql = """
             UPDATE msgflux_messages SET state = $1, error_details = $2, retry_count = retry_count + 1
-            WHERE message_id = $3
+            WHERE message_id = $3 AND consumer_id = $4
             """;
 
         await using var cmd = dataSource.CreateCommand(sql);
         cmd.Parameters.AddWithValue((short)MessageState.Failed);
         cmd.Parameters.AddWithValue(errorDetails);
         cmd.Parameters.AddWithValue(messageId);
+        cmd.Parameters.AddWithValue(consumerId);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task DeadLetterAsync(string messageId, string reason, CancellationToken ct = default)
+    public async Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
     {
         const string sql = """
             UPDATE msgflux_messages SET state = $1, error_details = $2
-            WHERE message_id = $3
+            WHERE message_id = $3 AND consumer_id = $4
             """;
 
         await using var cmd = dataSource.CreateCommand(sql);
         cmd.Parameters.AddWithValue((short)MessageState.DeadLettered);
         cmd.Parameters.AddWithValue(reason);
         cmd.Parameters.AddWithValue(messageId);
+        cmd.Parameters.AddWithValue(consumerId);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -89,7 +112,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
     {
         var paramIndex = 1;
         var sql = """
-            SELECT message_id, payload, headers, message_type, state, retry_count, error_details, created_at, processed_at
+            SELECT message_id, consumer_id, payload, headers, message_type, state, retry_count, error_details, created_at, processed_at
             FROM msgflux_messages
             WHERE (state IN (0, 3)
             """;
@@ -128,15 +151,16 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
             results.Add(new PersistedMessage
             {
                 MessageId = reader.GetString(0),
-                Payload = (byte[])reader[1],
-                Headers = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(2))
+                ConsumerId = reader.GetString(1),
+                Payload = (byte[])reader[2],
+                Headers = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(3))
                           ?? new Dictionary<string, string>(),
-                MessageType = reader.GetString(3),
-                State = (MessageState)reader.GetInt16(4),
-                RetryCount = reader.GetInt32(5),
-                ErrorDetails = reader.IsDBNull(6) ? null : reader.GetString(6),
-                CreatedAt = reader.GetFieldValue<DateTimeOffset>(7),
-                ProcessedAt = reader.IsDBNull(8) ? null : reader.GetFieldValue<DateTimeOffset>(8)
+                MessageType = reader.GetString(4),
+                State = (MessageState)reader.GetInt16(5),
+                RetryCount = reader.GetInt32(6),
+                ErrorDetails = reader.IsDBNull(7) ? null : reader.GetString(7),
+                CreatedAt = reader.GetFieldValue<DateTimeOffset>(8),
+                ProcessedAt = reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9)
             });
         }
 

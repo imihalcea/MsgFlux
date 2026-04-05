@@ -13,14 +13,13 @@ public class EngineTimeoutTests
         var store = new InMemoryMessageStore();
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
             options
-                .WithDurability()
                 .WithStaleProcessingTimeout(TimeSpan.FromMilliseconds(200))
-                .AddConsumer<HangingHandler>();
+                .AddConsumer<HangingHandler>(Semantics.AtLeastOnce);
         });
-        services.AddSingleton<IMessageStore>(store);
 
         HangingHandler.Reset();
         var provider = services.BuildServiceProvider();
@@ -50,14 +49,13 @@ public class EngineTimeoutTests
         var store = new InMemoryMessageStore();
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
             options
-                .WithDurability()
                 .WithStaleProcessingTimeout(TimeSpan.FromSeconds(5))
-                .AddConsumer<FastHandler>();
+                .AddConsumer<FastHandler>(Semantics.AtLeastOnce);
         });
-        services.AddSingleton<IMessageStore>(store);
 
         FastHandler.Reset();
         var provider = services.BuildServiceProvider();
@@ -95,7 +93,7 @@ public class EngineTimeoutTests
         HangingHandler.Reset();
         var provider = services.BuildServiceProvider();
 
-        var engine = provider.GetRequiredService<IHostedService>();
+        var engine = provider.GetServices<IHostedService>().OfType<EngineService>().OfType<IHostedService>().First();
         await engine.StartAsync(CancellationToken.None);
 
         // Act
@@ -105,13 +103,7 @@ public class EngineTimeoutTests
         // Wait for timeout + margin
         await Task.Delay(1000);
 
-        // Assert — consumer was called (started hanging), but the slot was freed
-        // Verify a second message can still be processed (no deadlock)
-        FastHandler.Reset();
-
-        // Re-register a fast consumer isn't possible, but we can verify the engine
-        // is still alive by checking it doesn't block. The key assertion:
-        // HangingHandler was invoked (proves message was dispatched)
+        // Assert — HangingHandler was invoked (proves message was dispatched)
         Assert.That(HangingHandler.HandledCount, Is.EqualTo(1));
 
         await engine.StopAsync(CancellationToken.None);

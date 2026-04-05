@@ -10,35 +10,37 @@ public class MessagePurgeServiceTests
     {
         // Arrange
         var store = new InMemoryMessageStore();
+        const string consumerId = "consumer-a";
 
         // Persist and complete an old message
         var oldMsg = new PersistedMessage
         {
             MessageId = Guid.NewGuid().ToString(),
+            ConsumerId = consumerId,
             Payload = [0x01],
             Headers = new Dictionary<string, string>(),
             MessageType = "Test",
             State = MessageState.Pending,
             CreatedAt = DateTimeOffset.UtcNow.AddDays(-10)
         };
-        await store.PersistAsync(oldMsg);
-        await store.AcknowledgeAsync(oldMsg.MessageId);
+        await store.PersistAsync(new[] { oldMsg });
+        await store.AcknowledgeAsync(oldMsg.MessageId, consumerId);
 
         // Persist and complete a recent message (should NOT be purged)
         var recentMsg = new PersistedMessage
         {
             MessageId = Guid.NewGuid().ToString(),
+            ConsumerId = consumerId,
             Payload = [0x02],
             Headers = new Dictionary<string, string>(),
             MessageType = "Test",
             State = MessageState.Pending,
             CreatedAt = DateTimeOffset.UtcNow
         };
-        await store.PersistAsync(recentMsg);
-        await store.AcknowledgeAsync(recentMsg.MessageId);
+        await store.PersistAsync(new[] { recentMsg });
+        await store.AcknowledgeAsync(recentMsg.MessageId, consumerId);
 
         var options = new MsgFluxOptions();
-        options.WithDurability();
         options.WithPurge(olderThan: TimeSpan.FromDays(7), interval: TimeSpan.FromMilliseconds(50));
 
         using var loggerFactory = LoggerFactory.Create(_ => { });
@@ -52,6 +54,6 @@ public class MessagePurgeServiceTests
 
         // Assert — old message purged, recent message kept
         Assert.That(store.Messages, Has.Count.EqualTo(1));
-        Assert.That(store.Messages.ContainsKey(recentMsg.MessageId), Is.True);
+        Assert.That(store.Messages.ContainsKey((recentMsg.MessageId, consumerId)), Is.True);
     }
 }

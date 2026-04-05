@@ -49,9 +49,9 @@ public partial class MessageReplayService(
 
             if (message.RetryCount >= options.MaxDeadLetterRetries)
             {
-                await messageStore.DeadLetterAsync(message.MessageId,
+                await messageStore.DeadLetterAsync(message.MessageId, message.ConsumerId,
                     $"Max retries ({options.MaxDeadLetterRetries}) exceeded", ct);
-                LogMessageDeadLettered(logger, message.MessageId);
+                LogMessageDeadLettered(logger, message.MessageId, message.ConsumerId);
                 continue;
             }
 
@@ -59,11 +59,19 @@ public partial class MessageReplayService(
                 MessageId: message.MessageId,
                 Payload: message.Payload,
                 Headers: message.Headers,
-                MessageType: message.MessageType);
+                MessageType: message.MessageType,
+                TargetConsumerId: message.ConsumerId);
 
             var writer = channelRxTx.GetWriter(type);
-            await writer.WriteAsync(envelope, ct);
-            LogMessageReplayed(logger, message.MessageId, message.MessageType);
+
+            // TryWrite + abandon on full channel: the replay cycle will retry on the next tick.
+            // Avoids breaking backpressure of the in-memory channel.
+            if (!writer.TryWrite(envelope))
+            {
+                LogReplayBackpressure(logger, message.MessageId, type.Name);
+                break;
+            }
+            LogMessageReplayed(logger, message.MessageId, message.MessageType, message.ConsumerId);
         }
     }
 
@@ -73,9 +81,12 @@ public partial class MessageReplayService(
     [LoggerMessage(LogLevel.Warning, "Unknown message type {MessageType} during replay, skipping")]
     static partial void LogUnknownMessageType(ILogger logger, string messageType);
 
-    [LoggerMessage(LogLevel.Debug, "Replayed message {MessageId} of type {MessageType}")]
-    static partial void LogMessageReplayed(ILogger logger, string messageId, string messageType);
+    [LoggerMessage(LogLevel.Debug, "Replayed message {MessageId} of type {MessageType} for consumer {ConsumerId}")]
+    static partial void LogMessageReplayed(ILogger logger, string messageId, string messageType, string consumerId);
 
-    [LoggerMessage(LogLevel.Warning, "Message {MessageId} moved to dead-letter during replay")]
-    static partial void LogMessageDeadLettered(ILogger logger, string messageId);
+    [LoggerMessage(LogLevel.Warning, "Message {MessageId} / consumer {ConsumerId} moved to dead-letter during replay")]
+    static partial void LogMessageDeadLettered(ILogger logger, string messageId, string consumerId);
+
+    [LoggerMessage(LogLevel.Debug, "Channel full, stopping replay batch at message {MessageId} for {MessageType}")]
+    static partial void LogReplayBackpressure(ILogger logger, string messageId, string messageType);
 }

@@ -5,40 +5,47 @@ namespace MsgFlux.Core.Tests;
 
 /// <summary>
 /// In-memory IMessageStore implementation for unit testing.
+/// Keyed by (MessageId, ConsumerId).
 /// </summary>
 public class InMemoryMessageStore : IMessageStore
 {
-    public ConcurrentDictionary<string, PersistedMessage> Messages { get; } = new();
+    public ConcurrentDictionary<(string MessageId, string ConsumerId), PersistedMessage> Messages { get; } = new();
 
-    public Task<string> PersistAsync(PersistedMessage message, CancellationToken ct = default)
+    public Task PersistAsync(IReadOnlyList<PersistedMessage> messages, CancellationToken ct = default)
     {
-        Messages.TryAdd(message.MessageId, message);
-        return Task.FromResult(message.MessageId);
-    }
-
-    public Task MarkAsProcessingAsync(string messageId, CancellationToken ct = default)
-    {
-        if (Messages.TryGetValue(messageId, out var msg))
+        foreach (var m in messages)
         {
-            Messages[messageId] = msg with { State = MessageState.Processing, ProcessedAt = DateTimeOffset.UtcNow };
+            Messages.TryAdd((m.MessageId, m.ConsumerId), m);
         }
         return Task.CompletedTask;
     }
 
-    public Task AcknowledgeAsync(string messageId, CancellationToken ct = default)
+    public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
     {
-        if (Messages.TryGetValue(messageId, out var msg))
+        var key = (messageId, consumerId);
+        if (Messages.TryGetValue(key, out var msg))
         {
-            Messages[messageId] = msg with { State = MessageState.Completed, ProcessedAt = DateTimeOffset.UtcNow };
+            Messages[key] = msg with { State = MessageState.Processing, ProcessedAt = DateTimeOffset.UtcNow };
         }
         return Task.CompletedTask;
     }
 
-    public Task MarkAsFailedAsync(string messageId, string errorDetails, CancellationToken ct = default)
+    public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
     {
-        if (Messages.TryGetValue(messageId, out var msg))
+        var key = (messageId, consumerId);
+        if (Messages.TryGetValue(key, out var msg))
         {
-            Messages[messageId] = msg with
+            Messages[key] = msg with { State = MessageState.Completed, ProcessedAt = DateTimeOffset.UtcNow };
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+    {
+        var key = (messageId, consumerId);
+        if (Messages.TryGetValue(key, out var msg))
+        {
+            Messages[key] = msg with
             {
                 State = MessageState.Failed,
                 ErrorDetails = errorDetails,
@@ -48,11 +55,12 @@ public class InMemoryMessageStore : IMessageStore
         return Task.CompletedTask;
     }
 
-    public Task DeadLetterAsync(string messageId, string reason, CancellationToken ct = default)
+    public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
     {
-        if (Messages.TryGetValue(messageId, out var msg))
+        var key = (messageId, consumerId);
+        if (Messages.TryGetValue(key, out var msg))
         {
-            Messages[messageId] = msg with { State = MessageState.DeadLettered, ErrorDetails = reason };
+            Messages[key] = msg with { State = MessageState.DeadLettered, ErrorDetails = reason };
         }
         return Task.CompletedTask;
     }
@@ -92,19 +100,19 @@ public class InMemoryMessageStore : IMessageStore
 /// </summary>
 public class FailingMessageStore : IMessageStore
 {
-    public Task<string> PersistAsync(PersistedMessage message, CancellationToken ct = default)
+    public Task PersistAsync(IReadOnlyList<PersistedMessage> messages, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
-    public Task MarkAsProcessingAsync(string messageId, CancellationToken ct = default)
+    public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
-    public Task AcknowledgeAsync(string messageId, CancellationToken ct = default)
+    public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
-    public Task MarkAsFailedAsync(string messageId, string errorDetails, CancellationToken ct = default)
+    public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
-    public Task DeadLetterAsync(string messageId, string reason, CancellationToken ct = default)
+    public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
     public Task<IReadOnlyList<PersistedMessage>> FetchUnprocessedAsync(

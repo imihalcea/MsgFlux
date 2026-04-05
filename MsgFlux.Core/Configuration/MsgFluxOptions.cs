@@ -8,7 +8,6 @@ public class MsgFluxOptions
     public int MaxPayloadSizeKb { get; set; } = 64;
     public int ChannelCapacity { get; set; } = 1000;
     public int MaxDegreeOfParallelism { get; set; } = Environment.ProcessorCount;
-    public bool DurabilityEnabled { get; internal set; }
     public TimeSpan StaleProcessingTimeout { get; set; } = TimeSpan.FromMinutes(5);
     public int MaxDeadLetterRetries { get; set; } = 3;
     public TimeSpan PurgeOlderThan { get; set; } = TimeSpan.FromDays(7);
@@ -35,12 +34,6 @@ public class MsgFluxOptions
         return this;
     }
 
-    public MsgFluxOptions WithDurability()
-    {
-        DurabilityEnabled = true;
-        return this;
-    }
-
     public MsgFluxOptions WithStaleProcessingTimeout(TimeSpan timeout)
     {
         StaleProcessingTimeout = timeout;
@@ -60,7 +53,11 @@ public class MsgFluxOptions
         return this;
     }
 
-    public MsgFluxOptions AddConsumer<TConsumer>() where TConsumer : class
+    /// <summary>
+    /// Registers a consumer with an explicit delivery semantic. AtMostOnce is the default (fire-and-forget in-memory).
+    /// AtLeastOnce requires an IMessageStore provider (e.g., AddMsgFluxPostgres).
+    /// </summary>
+    public MsgFluxOptions AddConsumer<TConsumer>(Semantics semantics = Semantics.AtMostOnce) where TConsumer : class
     {
         ConsumerRegistrations.Add((services, registry) =>
         {
@@ -80,7 +77,8 @@ public class MsgFluxOptions
             {
                 services.AddScoped(i, consumerType);
                 var messageType = i.GetGenericArguments()[0];
-                RegisterMethod.MakeGenericMethod(messageType).Invoke(null, [registry]);
+                RegisterMethod.MakeGenericMethod(messageType, consumerType)
+                    .Invoke(null, [registry, semantics]);
             }
         });
         return this;
@@ -89,5 +87,7 @@ public class MsgFluxOptions
     private static readonly System.Reflection.MethodInfo RegisterMethod =
         typeof(MsgFluxOptions).GetMethod(nameof(RegisterTyped), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
 
-    private static void RegisterTyped<TMessage>(Registry registry) => registry.Register<TMessage>();
+    private static void RegisterTyped<TMessage, TConsumer>(Registry registry, Semantics semantics)
+        where TConsumer : class, IConsume<TMessage>
+        => registry.Register<TMessage, TConsumer>(semantics);
 }

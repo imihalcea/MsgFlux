@@ -13,12 +13,11 @@ public class DurablePublisherTests
         var store = new InMemoryMessageStore();
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
-            options.WithDurability();
-            options.AddConsumer<DurableTestHandler>();
+            options.AddConsumer<DurableTestHandler>(Semantics.AtLeastOnce);
         });
-        services.AddSingleton<IMessageStore>(store);
 
         DurableTestHandler.Reset();
         var provider = services.BuildServiceProvider();
@@ -48,12 +47,11 @@ public class DurablePublisherTests
         var store = new FailingMessageStore();
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
-            options.WithDurability();
-            options.AddConsumer<DurableTestHandler>();
+            options.AddConsumer<DurableTestHandler>(Semantics.AtLeastOnce);
         });
-        services.AddSingleton<IMessageStore>(store);
 
         DurableTestHandler.Reset();
         var provider = services.BuildServiceProvider();
