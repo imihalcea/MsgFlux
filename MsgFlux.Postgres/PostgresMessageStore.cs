@@ -7,7 +7,7 @@ namespace MsgFlux.Postgres;
 
 public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : IMessageStore
 {
-    public async Task PersistAsync(IReadOnlyList<PersistedMessage> messages, CancellationToken ct = default)
+    public async Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
     {
         if (messages.Count == 0) return;
 
@@ -106,7 +106,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<IReadOnlyList<PersistedMessage>> FetchUnprocessedAsync(
+    public async Task<IReadOnlyList<Message>> FetchUnprocessedAsync(
         string? messageType = null, int maxCount = 100,
         TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
     {
@@ -144,11 +144,11 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
         cmd.Parameters.AddWithValue(maxCount);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
-        var results = new List<PersistedMessage>();
+        var results = new List<Message>();
 
         while (await reader.ReadAsync(ct))
         {
-            results.Add(new PersistedMessage
+            results.Add(new Message
             {
                 MessageId = reader.GetString(0),
                 ConsumerId = reader.GetString(1),

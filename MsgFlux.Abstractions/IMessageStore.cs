@@ -5,7 +5,7 @@ public interface IMessageStore
     /// <summary>
     /// Persists one inbox row per target consumer. The store must enforce uniqueness on (MessageId, ConsumerId).
     /// </summary>
-    Task PersistAsync(IReadOnlyList<PersistedMessage> messages, CancellationToken ct = default);
+    Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default);
 
     Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default);
     Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default);
@@ -16,7 +16,7 @@ public interface IMessageStore
     /// Returns unprocessed rows (Pending or stuck Processing) across all consumers.
     /// Each returned PersistedMessage carries its ConsumerId so the caller can dispatch selectively.
     /// </summary>
-    Task<IReadOnlyList<PersistedMessage>> FetchUnprocessedAsync(
+    Task<IReadOnlyList<Message>> FetchUnprocessedAsync(
         string? messageType = null,
         int maxCount = 100,
         TimeSpan? staleProcessingTimeout = null,

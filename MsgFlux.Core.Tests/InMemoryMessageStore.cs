@@ -9,9 +9,9 @@ namespace MsgFlux.Core.Tests;
 /// </summary>
 public class InMemoryMessageStore : IMessageStore
 {
-    public ConcurrentDictionary<(string MessageId, string ConsumerId), PersistedMessage> Messages { get; } = new();
+    public ConcurrentDictionary<(string MessageId, string ConsumerId), Message> Messages { get; } = new();
 
-    public Task PersistAsync(IReadOnlyList<PersistedMessage> messages, CancellationToken ct = default)
+    public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
     {
         foreach (var m in messages)
         {
@@ -65,7 +65,7 @@ public class InMemoryMessageStore : IMessageStore
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<PersistedMessage>> FetchUnprocessedAsync(
+    public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(
         string? messageType = null, int maxCount = 100,
         TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
     {
@@ -81,7 +81,7 @@ public class InMemoryMessageStore : IMessageStore
             .Take(maxCount)
             .ToList();
 
-        return Task.FromResult<IReadOnlyList<PersistedMessage>>(results);
+        return Task.FromResult<IReadOnlyList<Message>>(results);
     }
 
     public Task<int> PurgeCompletedAsync(TimeSpan olderThan, CancellationToken ct = default)
@@ -100,7 +100,7 @@ public class InMemoryMessageStore : IMessageStore
 /// </summary>
 public class FailingMessageStore : IMessageStore
 {
-    public Task PersistAsync(IReadOnlyList<PersistedMessage> messages, CancellationToken ct = default)
+    public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
     public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
@@ -115,7 +115,7 @@ public class FailingMessageStore : IMessageStore
     public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
-    public Task<IReadOnlyList<PersistedMessage>> FetchUnprocessedAsync(
+    public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(
         string? messageType = null, int maxCount = 100,
         TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");

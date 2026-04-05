@@ -5,19 +5,21 @@ using MsgFlux.Core.Serialization;
 
 namespace MsgFlux.Core.Tests;
 
+/// <summary>
+/// Verifies the durable replay path: the PollingStoreSource picks up pre-persisted
+/// messages and the Engine dispatches them to the owning consumer.
+/// </summary>
 public class MessageReplayServiceTests
 {
     [Test]
-    public async Task ReplayService_Should_Replay_Unprocessed_Messages()
+    public async Task Durable_Source_Should_Stream_Pre_Persisted_Messages_To_Consumer()
     {
-        // Arrange
         var store = new InMemoryMessageStore();
         var serializer = new JsonSerializer();
-
-        // Pre-persist a message as if it was saved before a crash
-        var payload = serializer.Serialize(new ReplayTestMessage { Data = "Replayed" });
         var consumerId = Registry.GetConsumerId(typeof(ReplayTestHandler));
-        var persisted = new PersistedMessage
+
+        var payload = serializer.Serialize(new ReplayTestMessage { Data = "Replayed" });
+        await store.PersistAsync(new[] { new Message
         {
             MessageId = Guid.NewGuid().ToString(),
             ConsumerId = consumerId,
@@ -26,90 +28,71 @@ public class MessageReplayServiceTests
             MessageType = nameof(ReplayTestMessage),
             State = MessageState.Pending,
             CreatedAt = DateTimeOffset.UtcNow
-        };
-        await store.PersistAsync(new[] { persisted });
+        }});
 
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IMessageStore>(store);
-        services.AddMsgFlux(options =>
-        {
-            options.AddConsumer<ReplayTestHandler>(Semantics.AtLeastOnce);
-        });
+        services.AddMsgFlux(opt => opt
+            .WithReplayInterval(TimeSpan.FromMilliseconds(50))
+            .AddConsumer<ReplayTestHandler>(Semantics.AtLeastOnce));
 
         ReplayTestHandler.Reset();
         var provider = services.BuildServiceProvider();
 
-        // Start replay service first (it runs before Engine per spec)
-        var replayService = provider.GetServices<IHostedService>().OfType<MessageReplayService>().First();
-        await replayService.StartAsync(CancellationToken.None);
-
-        // Then start Engine
-        var engine = provider.GetServices<IHostedService>().OfType<EngineService>().First();
-        await engine.StartAsync(CancellationToken.None);
+        foreach (var hs in provider.GetServices<IHostedService>())
+            await hs.StartAsync(CancellationToken.None);
 
         await Task.Delay(500);
 
-        // Assert
-        Assert.That(ReplayTestHandler.HandledCount, Is.EqualTo(1));
+        Assert.That(ReplayTestHandler.HandledCount, Is.GreaterThanOrEqualTo(1));
         Assert.That(ReplayTestHandler.LastData, Is.EqualTo("Replayed"));
 
-        await engine.StopAsync(CancellationToken.None);
+        foreach (var hs in provider.GetServices<IHostedService>())
+            await hs.StopAsync(CancellationToken.None);
     }
 
     [Test]
-    public async Task ReplayService_Should_Retry_Failed_Messages_Periodically()
+    public async Task Durable_Source_Should_Retry_Failed_Messages_Until_Success()
     {
-        // Arrange
         var store = new InMemoryMessageStore();
         var serializer = new JsonSerializer();
+        var consumerId = Registry.GetConsumerId(typeof(ReplayTestHandler));
 
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IMessageStore>(store);
-        services.AddMsgFlux(options =>
-        {
-            options
-                .WithReplayInterval(TimeSpan.FromMilliseconds(100))
-                .AddConsumer<ReplayTestHandler>(Semantics.AtLeastOnce);
-        });
+        services.AddMsgFlux(opt => opt
+            .WithReplayInterval(TimeSpan.FromMilliseconds(50))
+            .AddConsumer<ReplayTestHandler>(Semantics.AtLeastOnce));
 
         ReplayTestHandler.Reset();
         var provider = services.BuildServiceProvider();
 
-        // Start Engine first
-        var engine = provider.GetServices<IHostedService>().OfType<EngineService>().First();
-        await engine.StartAsync(CancellationToken.None);
+        foreach (var hs in provider.GetServices<IHostedService>())
+            await hs.StartAsync(CancellationToken.None);
 
-        // Start replay service
-        var replayService = provider.GetServices<IHostedService>().OfType<MessageReplayService>().First();
-        await replayService.StartAsync(CancellationToken.None);
-
-        // Simulate a message that was persisted and marked as Failed (e.g. after a timeout)
         var payload = serializer.Serialize(new ReplayTestMessage { Data = "RetryMe" });
-        var consumerId = Registry.GetConsumerId(typeof(ReplayTestHandler));
-        var failed = new PersistedMessage
+        var messageId = Guid.NewGuid().ToString();
+        await store.PersistAsync(new[] { new Message
         {
-            MessageId = Guid.NewGuid().ToString(),
+            MessageId = messageId,
             ConsumerId = consumerId,
             Payload = payload,
             Headers = new Dictionary<string, string>(),
             MessageType = nameof(ReplayTestMessage),
             State = MessageState.Pending,
             CreatedAt = DateTimeOffset.UtcNow
-        };
-        await store.PersistAsync(new[] { failed });
-        await store.MarkAsFailedAsync(failed.MessageId, consumerId, "simulated failure");
+        }});
+        await store.MarkAsFailedAsync(messageId, consumerId, "simulated failure");
 
-        // Wait for replay cycle to pick it up (interval = 100ms)
         await Task.Delay(500);
 
-        // Assert — message was replayed and processed by the consumer
         Assert.That(ReplayTestHandler.HandledCount, Is.GreaterThanOrEqualTo(1));
         Assert.That(ReplayTestHandler.LastData, Is.EqualTo("RetryMe"));
 
-        await engine.StopAsync(CancellationToken.None);
-        await replayService.StopAsync(CancellationToken.None);
+        foreach (var hs in provider.GetServices<IHostedService>())
+            await hs.StopAsync(CancellationToken.None);
     }
 
     public class ReplayTestMessage

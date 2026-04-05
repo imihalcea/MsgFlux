@@ -1,8 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using MsgFlux.Abstractions;
-using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
 
 namespace MsgFlux.Core.Benchmarks;
@@ -29,7 +27,7 @@ public class EngineBenchmarks
 
         public async Task HandleAsync(BenchmarkMessage message, CancellationToken ct)
         {
-            await Task.Delay(10, ct); // Simulate small work
+            await Task.Delay(10, ct);
             if (Interlocked.Increment(ref ProcessedCount) == TargetCount)
             {
                 Tcs.TrySetResult();
@@ -41,20 +39,20 @@ public class EngineBenchmarks
     public void Setup()
     {
         var services = new ServiceCollection();
-        // Remove Console logging for benchmarks to avoid I/O overhead
         services.AddLogging();
-        
+
         var options = new MsgFluxOptions { ChannelCapacity = 15_000 };
         services.AddSingleton(options);
-        services.AddSingleton<IChannelRxTx>(new InMemoryRxTx(options));
         services.AddSingleton<ISerializer, JsonSerializer>();
         services.AddSingleton<Registry>();
+        services.AddSingleton<InMemoryMessageSource>();
+        services.AddSingleton<IMessageSource>(sp => sp.GetRequiredService<InMemoryMessageSource>());
         services.AddSingleton<EngineService>();
         services.AddSingleton<IPublish, Publisher>();
-        services.AddTransient<IConsume<BenchmarkMessage>, BenchmarkConsumer>();
-        
+        services.AddScoped<IConsume<BenchmarkMessage>, BenchmarkConsumer>();
+
         _serviceProvider = services.BuildServiceProvider();
-        
+
         var registry = _serviceProvider.GetRequiredService<Registry>();
         registry.Register<BenchmarkMessage, BenchmarkConsumer>(Semantics.AtMostOnce);
 

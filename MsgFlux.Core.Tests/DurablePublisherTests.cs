@@ -16,6 +16,7 @@ public class DurablePublisherTests
         services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
+            options.WithReplayInterval(TimeSpan.FromMilliseconds(50));
             options.AddConsumer<DurableTestHandler>(Semantics.AtLeastOnce);
         });
 
@@ -50,6 +51,7 @@ public class DurablePublisherTests
         services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
+            options.WithReplayInterval(TimeSpan.FromMilliseconds(50));
             options.AddConsumer<DurableTestHandler>(Semantics.AtLeastOnce);
         });
 

@@ -1,45 +1,79 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using MsgFlux.Abstractions;
-using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
 
 namespace MsgFlux.Core;
 
 public static class Extensions
 {
+    /// <summary>
+    /// Registers MsgFlux into the service collection. Validates synchronously that every
+    /// AtLeastOnce consumer has a matching IMessageStore provider registered — so any
+    /// misconfiguration throws at this call site rather than at host startup.
+    ///
+    /// Convention: register the durability provider (e.g. AddMsgFluxPostgres) BEFORE AddMsgFlux.
+    /// </summary>
     public static IServiceCollection AddMsgFlux(this IServiceCollection services, Action<MsgFluxOptions>? configureOptions = null)
     {
         var options = new MsgFluxOptions();
         configureOptions?.Invoke(options);
         services.AddSingleton(options);
-
-        services.AddSingleton<IChannelRxTx, InMemoryRxTx>();
         services.AddSingleton<ISerializer, JsonSerializer>();
 
         var registry = new Registry();
+        foreach (var registration in options.ConsumerRegistrations)
+            registration(services, registry);
         services.AddSingleton(registry);
 
-        foreach (var registration in options.ConsumerRegistrations)
-        {
-            registration(services, registry);
-        }
+        ValidateDurabilityProvider(services, registry);
 
-        var durabilityRequired = registry.HasAtLeastOnceConsumers();
-
-        if (durabilityRequired)
+        services.AddSingleton<InMemoryMessageSource>();
+        services.AddSingleton<IMessageSource>(sp => sp.GetRequiredService<InMemoryMessageSource>());
+        services.AddSingleton<IPublish, Publisher>();
+        services.AddSingleton<IMessageSource>(sp =>
         {
-            services.AddSingleton<IPublish, DurablePublisher>();
-            services.AddHostedService<MessageReplayService>();
-            services.AddHostedService<MessagePurgeService>();
-        }
-        else
-        {
-            services.AddSingleton<IPublish, Publisher>();
-        }
+            var store = sp.GetService<IMessageStore>();
+            if (store is null) return new NullMessageSource();
+            return new PollingStoreSource(store, sp.GetRequiredService<MsgFluxOptions>(),
+                sp.GetRequiredService<ILogger<PollingStoreSource>>());
+        });
 
-        services.AddHostedService(sp => new DurabilityValidator(registry, sp, durabilityRequired));
+        services.AddHostedService<MessagePurgeService>();
         services.AddHostedService<EngineService>();
 
         return services;
     }
+
+    private static void ValidateDurabilityProvider(IServiceCollection services, Registry registry)
+    {
+        if (!registry.HasAtLeastOnceConsumers()) return;
+
+        var hasStore = services.Any(d => d.ServiceType == typeof(IMessageStore));
+        if (hasStore) return;
+
+        var offenders = registry.GetMessageTypes()
+            .SelectMany(t => registry.GetConsumers(t)
+                .Where(c => c.Semantics == Semantics.AtLeastOnce)
+                .Select(c => c.ConsumerType.Name));
+
+        throw new InvalidOperationException(
+            $"Consumer(s) declared with Semantics.AtLeastOnce ({string.Join(", ", offenders)}) " +
+            "but no IMessageStore provider is registered. Call services.AddMsgFluxPostgres(\"...\") " +
+            "(or another durability provider) BEFORE services.AddMsgFlux(...).");
+    }
+}
+
+/// <summary>
+/// Placeholder IMessageSource used when no durable store is registered; yields nothing.
+/// </summary>
+internal sealed class NullMessageSource : IMessageSource
+{
+#pragma warning disable CS1998
+    public async IAsyncEnumerable<DispatchItem> StreamAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        yield break;
+    }
+#pragma warning restore CS1998
 }

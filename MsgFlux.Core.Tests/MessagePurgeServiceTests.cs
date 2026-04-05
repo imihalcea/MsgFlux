@@ -13,7 +13,7 @@ public class MessagePurgeServiceTests
         const string consumerId = "consumer-a";
 
         // Persist and complete an old message
-        var oldMsg = new PersistedMessage
+        var oldMsg = new Message
         {
             MessageId = Guid.NewGuid().ToString(),
             ConsumerId = consumerId,
@@ -27,7 +27,7 @@ public class MessagePurgeServiceTests
         await store.AcknowledgeAsync(oldMsg.MessageId, consumerId);
 
         // Persist and complete a recent message (should NOT be purged)
-        var recentMsg = new PersistedMessage
+        var recentMsg = new Message
         {
             MessageId = Guid.NewGuid().ToString(),
             ConsumerId = consumerId,
@@ -44,7 +44,7 @@ public class MessagePurgeServiceTests
         options.WithPurge(olderThan: TimeSpan.FromDays(7), interval: TimeSpan.FromMilliseconds(50));
 
         using var loggerFactory = LoggerFactory.Create(_ => { });
-        var service = new MessagePurgeService(store, options, loggerFactory.CreateLogger<MessagePurgeService>());
+        var service = new MessagePurgeService(options, loggerFactory.CreateLogger<MessagePurgeService>(), store);
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));

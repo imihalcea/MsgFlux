@@ -1,6 +1,6 @@
 namespace MsgFlux.Abstractions;
 
-public record PersistedMessage
+public record Message
 {
     public required string MessageId { get; init; }
     /// <summary>

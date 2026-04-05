@@ -19,7 +19,7 @@ public class PostgresMessageStoreTests
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private PersistedMessage CreateMessage(
+    private Message CreateMessage(
         string? id = null,
         string consumerId = DefaultConsumerId,
         string messageType = "TestMessage",
@@ -35,7 +35,7 @@ public class PostgresMessageStoreTests
         CreatedAt = createdAt ?? _clock.UtcNow
     };
 
-    private Task PersistOne(PersistedMessage msg) => _store.PersistAsync(new[] { msg });
+    private Task PersistOne(Message msg) => _store.PersistAsync(new[] { msg });
 
     // --- PersistAsync ---
 

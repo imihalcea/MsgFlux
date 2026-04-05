@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using MsgFlux.Abstractions;
-using MsgFlux.Core.RxTx;
 
 namespace MsgFlux.Core.Tests;
 
@@ -62,17 +61,23 @@ public class DispatchTests
         var hostedService = provider.GetRequiredService<IHostedService>();
         await hostedService.StartAsync(CancellationToken.None);
 
-        var rxTx = provider.GetRequiredService<IChannelRxTx>();
+        var inMemory = provider.GetRequiredService<InMemoryMessageSource>();
         var publisher = provider.GetRequiredService<IPublish>();
+        var consumerId = Registry.GetConsumerId(typeof(UserCreatedHandler1));
 
-        // Act 1: Inject Poison Message (Corrupted Bytes)
-        var writer = rxTx.GetWriter(typeof(UserCreated));
-        await writer.WriteAsync(new Envelope(
-            MessageId: Guid.NewGuid().ToString(),
-            Payload: [0xDE, 0xAD, 0xBE, 0xEF], // Invalid Brotli/JSON
-            Headers: new Dictionary<string, string>(),
-            MessageType: nameof(UserCreated)
-        ));
+        // Act 1: Inject Poison Message (Corrupted Bytes) directly into the in-memory source
+        await inMemory.PersistAsync(new[]
+        {
+            new Message
+            {
+                MessageId = Guid.NewGuid().ToString(),
+                ConsumerId = consumerId,
+                Payload = [0xDE, 0xAD, 0xBE, 0xEF], // Invalid Brotli/JSON
+                Headers = new Dictionary<string, string>(),
+                MessageType = nameof(UserCreated),
+                CreatedAt = DateTimeOffset.UtcNow
+            }
+        });
 
         // Act 2: Send Valid Message
         await publisher.PublishAsync(new UserCreated { Name = "Survivor" });

@@ -1,64 +1,56 @@
-﻿using System.Threading.Channels;
 using MsgFlux.Abstractions;
-using MsgFlux.Core.RxTx;
 using NUnit.Framework;
 
 namespace MsgFlux.Core.Tests;
 
 public class SendAndRecieveMessagesTest
 {
-    [Test]
-    public async Task Should_Preserve_Message_Integrity_Through_Channel()
+    private static Message CreateMessage(string id = "m1") => new()
     {
-        // Arrange
-        var rxTx = new InMemoryRxTx();
-        var messageType = typeof(string);
-        var originalPayload = new byte[] { 0x01, 0x02, 0x03 };
-        var envelope = new Envelope(
-            MessageId: Guid.NewGuid().ToString(),
-            Payload: originalPayload,
-            Headers: new Dictionary<string, string> { { "key", "value" } },
-            MessageType: messageType.Name
-        );
+        MessageId = id,
+        ConsumerId = "consumer-a",
+        Payload = [0x01, 0x02, 0x03],
+        Headers = new Dictionary<string, string> { ["key"] = "value" },
+        MessageType = "Test",
+        CreatedAt = DateTimeOffset.UtcNow
+    };
 
-        var writer = rxTx.GetWriter(messageType);
-        var reader = rxTx.GetReader(messageType);
+    [Test]
+    public async Task Should_Preserve_Message_Integrity_Through_InMemorySource()
+    {
+        var source = new InMemoryMessageSource(new MsgFluxOptions());
+        var original = CreateMessage();
 
-        // Act
-        await writer.WriteAsync(envelope);
-        var receivedEnvelope = await reader.ReadAsync();
+        await source.PersistAsync(new[] { original });
 
-        // Assert
-        Assert.That(receivedEnvelope, Is.EqualTo(envelope));
-        Assert.That(receivedEnvelope.Payload, Is.EqualTo(originalPayload));
-        Assert.That(receivedEnvelope.Headers["key"], Is.EqualTo("value"));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await using var e = source.StreamAsync(cts.Token).GetAsyncEnumerator(cts.Token);
+        Assert.That(await e.MoveNextAsync(), Is.True);
+
+        var received = e.Current.Message;
+        Assert.That(received.MessageId, Is.EqualTo(original.MessageId));
+        Assert.That(received.ConsumerId, Is.EqualTo(original.ConsumerId));
+        Assert.That(received.Payload, Is.EqualTo(original.Payload));
+        Assert.That(received.Headers["key"], Is.EqualTo("value"));
     }
 
     [Test]
-    public async Task Should_Apply_Backpressure_When_Channel_Is_Full()
+    public async Task Should_Apply_Backpressure_When_Source_Is_Full()
     {
-        // Arrange: Channel with capacity 1
         var options = new MsgFluxOptions().WithChannelCapacity(1);
-        var rxTx = new InMemoryRxTx(options);
-        var messageType = typeof(int);
-        var writer = rxTx.GetWriter(messageType);
-        var reader = rxTx.GetReader(messageType);
-        
-        var envelope1 = new Envelope("1", [], new(), "int");
-        var envelope2 = new Envelope("2", [], new(), "int");
+        var source = new InMemoryMessageSource(options);
 
-        // Act & Assert
-        
-        await writer.WriteAsync(envelope1); // Buffer full(Capacity = 1)
-        var blockedWriteTask = writer.WriteAsync(envelope2).AsTask();
-        await Task.WhenAny(blockedWriteTask, Task.Delay(50));
-        Assert.That(blockedWriteTask.IsCompleted, Is.False, "Producer should be blocked when channel is full");
-        
-        await reader.ReadAsync();
-        
-        // The blocked write task should complete.
-        var completedTask = await Task.WhenAny(blockedWriteTask, Task.Delay(1000));
-        Assert.That(completedTask, Is.EqualTo(blockedWriteTask), "Producer should resume when space becomes available");
-        Assert.That(blockedWriteTask.IsCompleted, Is.True);
+        await source.PersistAsync(new[] { CreateMessage("1") }); // Fills the buffer
+
+        var blockedTask = source.PersistAsync(new[] { CreateMessage("2") });
+        await Task.WhenAny(blockedTask, Task.Delay(50));
+        Assert.That(blockedTask.IsCompleted, Is.False, "Producer should be blocked when source is full");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await using var e = source.StreamAsync(cts.Token).GetAsyncEnumerator(cts.Token);
+        await e.MoveNextAsync(); // drain one
+
+        var completed = await Task.WhenAny(blockedTask, Task.Delay(1000));
+        Assert.That(completed, Is.EqualTo(blockedTask), "Producer should resume when space becomes available");
     }
 }

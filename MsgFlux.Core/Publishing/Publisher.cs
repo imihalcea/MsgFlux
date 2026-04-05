@@ -1,54 +1,94 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using MsgFlux.Abstractions;
-using MsgFlux.Core.RxTx;
 using MsgFlux.Core.Serialization;
 
 namespace MsgFlux.Core;
 
-public partial class Publisher(IChannelRxTx channelRxTx, ISerializer serializer, ILogger<Publisher> logger, MsgFluxOptions options) : IPublish
+/// <summary>
+/// Single publisher that routes each message to the store corresponding to the consumer's semantic:
+/// AtMostOnce → in-memory source; AtLeastOnce → durable IMessageStore.
+/// One inbox row is created per registered consumer.
+/// </summary>
+public sealed partial class Publisher(
+    InMemoryMessageSource inMemory,
+    Registry registry,
+    ISerializer serializer,
+    MsgFluxOptions options,
+    ILogger<Publisher> logger,
+    IMessageStore? durableStore = null) : IPublish
 {
     private static readonly ActivitySource ActivitySource = new("MsgFlux");
 
-    public Publisher(IChannelRxTx channelRxTx, ISerializer serializer, ILogger<Publisher> logger) 
-        : this(channelRxTx, serializer, logger, new MsgFluxOptions())
-    {
-    }
-
     public async Task PublishAsync<T>(T message, CancellationToken ct = default)
     {
-        // ReSharper disable once ExplicitCallerInfoArgument
         using var activity = ActivitySource.StartActivity(nameof(PublishAsync), ActivityKind.Producer);
-        
+
         var headers = new Dictionary<string, string>();
         if (activity != null)
         {
-            // Inject TraceContext into headers
             headers["traceparent"] = activity.Id ?? string.Empty;
             if (activity.TraceStateString != null)
-            {
                 headers["tracestate"] = activity.TraceStateString;
-            }
         }
 
         var payload = serializer.Serialize(message);
+        var messageType = typeof(T);
 
         if (payload.Length > options.MaxPayloadSizeKb * 1024)
         {
-            LogPayloadTooLarge(logger, payload.Length, typeof(T).Name, options.MaxPayloadSizeKb);
+            LogPayloadTooLarge(logger, payload.Length, messageType.Name, options.MaxPayloadSizeKb);
         }
 
-        var envelope = new Envelope(
-            MessageId: Guid.NewGuid().ToString(),
-            Payload: payload,
-            Headers: headers,
-            MessageType: typeof(T).Name
-        );
+        var consumers = registry.GetConsumers(messageType);
+        if (consumers.Count == 0)
+        {
+            LogNoConsumers(logger, messageType.Name);
+            return;
+        }
 
-        var writer = channelRxTx.GetWriter(typeof(T));
-        await writer.WriteAsync(envelope, ct);
+        var messageId = Guid.NewGuid().ToString();
+        var now = DateTimeOffset.UtcNow;
+
+        List<Message>? inMemoryRows = null;
+        List<Message>? durableRows = null;
+
+        foreach (var c in consumers)
+        {
+            var row = new Message
+            {
+                MessageId = messageId,
+                ConsumerId = c.ConsumerId,
+                Payload = payload,
+                Headers = headers,
+                MessageType = messageType.Name,
+                CreatedAt = now
+            };
+
+            if (c.Semantics == Semantics.AtLeastOnce)
+                (durableRows ??= new()).Add(row);
+            else
+                (inMemoryRows ??= new()).Add(row);
+        }
+
+        // Durable first: if it throws, we don't enqueue in-memory either (the caller sees the failure
+        // and can retry; no partial delivery on the AtMostOnce side).
+        if (durableRows is { Count: > 0 })
+        {
+            if (durableStore is null)
+                throw new InvalidOperationException("Durable consumers declared but no IMessageStore registered.");
+            await durableStore.PersistAsync(durableRows, ct);
+        }
+
+        if (inMemoryRows is { Count: > 0 })
+        {
+            await inMemory.PersistAsync(inMemoryRows, ct);
+        }
     }
 
     [LoggerMessage(LogLevel.Warning, "Payload size {PayloadSize} for message {MessageType} exceeds {MaxPayloadSize}KB")]
     static partial void LogPayloadTooLarge(ILogger logger, int payloadSize, string messageType, int maxPayloadSize);
+
+    [LoggerMessage(LogLevel.Warning, "No consumer registered for {MessageType}; message dropped")]
+    static partial void LogNoConsumers(ILogger logger, string messageType);
 }

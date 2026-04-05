@@ -17,6 +17,7 @@ public class EngineTimeoutTests
         services.AddMsgFlux(options =>
         {
             options
+                .WithReplayInterval(TimeSpan.FromSeconds(2)) // single poll within test window
                 .WithStaleProcessingTimeout(TimeSpan.FromMilliseconds(200))
                 .AddConsumer<HangingHandler>(Semantics.AtLeastOnce);
         });
@@ -34,12 +35,13 @@ public class EngineTimeoutTests
         // Wait for timeout (200ms) + margin
         await Task.Delay(1000);
 
+        await engine.StopAsync(CancellationToken.None);
+        await ((IAsyncDisposable)provider).DisposeAsync();
+
         // Assert — message should be marked as Failed due to timeout
         var msg = store.Messages.Values.First();
         Assert.That(msg.State, Is.EqualTo(MessageState.Failed));
         Assert.That(msg.ErrorDetails, Does.Contain("timed out"));
-
-        await engine.StopAsync(CancellationToken.None);
     }
 
     [Test]
@@ -53,6 +55,7 @@ public class EngineTimeoutTests
         services.AddMsgFlux(options =>
         {
             options
+                .WithReplayInterval(TimeSpan.FromMilliseconds(50))
                 .WithStaleProcessingTimeout(TimeSpan.FromSeconds(5))
                 .AddConsumer<FastHandler>(Semantics.AtLeastOnce);
         });

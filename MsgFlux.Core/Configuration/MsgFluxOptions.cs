@@ -12,50 +12,22 @@ public class MsgFluxOptions
     public int MaxDeadLetterRetries { get; set; } = 3;
     public TimeSpan PurgeOlderThan { get; set; } = TimeSpan.FromDays(7);
     public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromHours(1);
-    public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(30);
+    public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(5);
+    public int PollingBatchSize { get; set; } = 500;
 
     internal List<Action<IServiceCollection, Registry>> ConsumerRegistrations { get; } = new();
 
-    public MsgFluxOptions WithMaxPayloadSizeKb(int sizeKb)
-    {
-        MaxPayloadSizeKb = sizeKb;
-        return this;
-    }
-
-    public MsgFluxOptions WithChannelCapacity(int capacity)
-    {
-        ChannelCapacity = capacity;
-        return this;
-    }
-
-    public MsgFluxOptions WithMaxDegreeOfParallelism(int maxDegreeOfParallelism)
-    {
-        MaxDegreeOfParallelism = maxDegreeOfParallelism;
-        return this;
-    }
-
-    public MsgFluxOptions WithStaleProcessingTimeout(TimeSpan timeout)
-    {
-        StaleProcessingTimeout = timeout;
-        return this;
-    }
-
-    public MsgFluxOptions WithPurge(TimeSpan olderThan, TimeSpan interval)
-    {
-        PurgeOlderThan = olderThan;
-        PurgeInterval = interval;
-        return this;
-    }
-
-    public MsgFluxOptions WithReplayInterval(TimeSpan interval)
-    {
-        ReplayInterval = interval;
-        return this;
-    }
+    public MsgFluxOptions WithMaxPayloadSizeKb(int sizeKb) { MaxPayloadSizeKb = sizeKb; return this; }
+    public MsgFluxOptions WithChannelCapacity(int capacity) { ChannelCapacity = capacity; return this; }
+    public MsgFluxOptions WithMaxDegreeOfParallelism(int dop) { MaxDegreeOfParallelism = dop; return this; }
+    public MsgFluxOptions WithStaleProcessingTimeout(TimeSpan t) { StaleProcessingTimeout = t; return this; }
+    public MsgFluxOptions WithPurge(TimeSpan olderThan, TimeSpan interval) { PurgeOlderThan = olderThan; PurgeInterval = interval; return this; }
+    public MsgFluxOptions WithReplayInterval(TimeSpan interval) { ReplayInterval = interval; return this; }
+    public MsgFluxOptions WithPollingBatchSize(int batchSize) { PollingBatchSize = batchSize; return this; }
 
     /// <summary>
-    /// Registers a consumer with an explicit delivery semantic. AtMostOnce is the default (fire-and-forget in-memory).
-    /// AtLeastOnce requires an IMessageStore provider (e.g., AddMsgFluxPostgres).
+    /// Registers a consumer with an explicit delivery semantic. AtMostOnce (default) uses the
+    /// in-memory source; AtLeastOnce requires an IMessageStore provider (e.g., AddMsgFluxPostgres).
     /// </summary>
     public MsgFluxOptions AddConsumer<TConsumer>(Semantics semantics = Semantics.AtMostOnce) where TConsumer : class
     {
@@ -69,9 +41,7 @@ public class MsgFluxOptions
                 .ToList();
 
             if (!interfaces.Any())
-            {
                 throw new InvalidOperationException($"Type {consumerType.Name} does not implement IConsume<T>.");
-            }
 
             foreach (var i in interfaces)
             {

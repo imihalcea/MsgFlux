@@ -16,6 +16,7 @@ public class EngineDurabilityTests
         services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
+            options.WithReplayInterval(TimeSpan.FromMilliseconds(50));
             options.AddConsumer<SuccessHandler>(Semantics.AtLeastOnce);
         });
 
@@ -48,6 +49,8 @@ public class EngineDurabilityTests
         services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
+            // Single-shot polling window for determinism: one dispatch → one Failed state → test stops.
+            options.WithReplayInterval(TimeSpan.FromSeconds(5));
             options.AddConsumer<FailingHandler>(Semantics.AtLeastOnce);
         });
 
@@ -61,13 +64,12 @@ public class EngineDurabilityTests
         var publisher = provider.GetRequiredService<IPublish>();
         await publisher.PublishAsync(new AckTestMessage { Value = "will-fail" });
 
-        await Task.Delay(2000); // Wait for retries
+        await Task.Delay(2000); // Wait for Polly retries (3×) + OnFail
+        await hostedService.StopAsync(CancellationToken.None);
 
         // Assert
         var msg = store.Messages.Values.First();
         Assert.That(msg.State, Is.EqualTo(MessageState.Failed));
-
-        await hostedService.StopAsync(CancellationToken.None);
     }
 
     public class AckTestMessage

@@ -4,13 +4,18 @@ using MsgFlux.Abstractions;
 
 namespace MsgFlux.Core;
 
+/// <summary>
+/// Periodically purges completed messages from the durable store. No-op when no store is registered.
+/// </summary>
 public partial class MessagePurgeService(
-    IMessageStore messageStore,
     MsgFluxOptions options,
-    ILogger<MessagePurgeService> logger) : BackgroundService
+    ILogger<MessagePurgeService> logger,
+    IMessageStore? messageStore = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (messageStore is null) return;
+
         while (!stoppingToken.IsCancellationRequested)
         {
             await Task.Delay(options.PurgeInterval, stoppingToken);
