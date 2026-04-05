@@ -14,7 +14,7 @@ public class PublisherTests
         // Arrange
         var options = new MsgFluxOptions();
         var registry = new Registry();
-        registry.Register<TestMessage, TestConsumer>(Semantics.AtMostOnce);
+        registry.Register<TestEvent, TestConsumer>(Semantics.AtMostOnce);
         var inMemory = new InMemoryMessageSource(options);
         var serializer = new JsonSerializer();
         var logger = NullLogger<Publisher>.Instance;
@@ -26,7 +26,7 @@ public class PublisherTests
         ActivitySource.AddActivityListener(activityListener);
 
         // Act
-        await publisher.PublishAsync(new TestMessage { Content = "Hello World" });
+        await publisher.PublishAsync(new TestEvent { Content = "Hello World" });
 
         // Assert — read the first DispatchItem off the source stream
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -34,11 +34,11 @@ public class PublisherTests
         Assert.That(await enumerator.MoveNextAsync(), Is.True);
 
         var msg = enumerator.Current.Message;
-        Assert.That(msg.MessageType, Is.EqualTo(nameof(TestMessage)));
+        Assert.That(msg.MessageType, Is.EqualTo(nameof(TestEvent)));
         Assert.That(msg.Headers.ContainsKey("traceparent"), Is.True);
         Assert.That(msg.Headers["traceparent"], Is.Not.Empty);
 
-        var deserialized = serializer.Deserialize<TestMessage>(msg.Payload);
+        var deserialized = serializer.Deserialize<TestEvent>(msg.Payload);
         Assert.That(deserialized, Is.Not.Null);
         Assert.That(deserialized!.Content, Is.EqualTo("Hello World"));
     }
@@ -48,7 +48,7 @@ public class PublisherTests
     {
         var options = new MsgFluxOptions().WithMaxPayloadSizeKb(1);
         var registry = new Registry();
-        registry.Register<TestMessage, TestConsumer>(Semantics.AtMostOnce);
+        registry.Register<TestEvent, TestConsumer>(Semantics.AtMostOnce);
         var inMemory = new InMemoryMessageSource(options);
         var serializer = new JsonSerializer();
         var logger = new TestLogger<Publisher>();
@@ -58,21 +58,21 @@ public class PublisherTests
         new Random().NextBytes(buffer);
         var largeContent = Convert.ToBase64String(buffer);
 
-        await publisher.PublishAsync(new TestMessage { Content = largeContent });
+        await publisher.PublishAsync(new TestEvent { Content = largeContent });
 
         var warning = logger.LogEntries.FirstOrDefault(e => e.LogLevel == LogLevel.Warning);
         Assert.That(warning, Is.Not.Null);
         Assert.That(warning!.Message, Does.Contain("exceeds 1KB"));
     }
 
-    public class TestMessage
+    public class TestEvent
     {
         public string Content { get; set; } = string.Empty;
     }
 
-    public class TestConsumer : IConsume<TestMessage>
+    public class TestConsumer : IConsume<TestEvent>
     {
-        public Task HandleAsync(TestMessage message, CancellationToken ct) => Task.CompletedTask;
+        public Task HandleAsync(TestEvent @event, CancellationToken ct) => Task.CompletedTask;
     }
 
     private class TestLogger<T> : ILogger<T>

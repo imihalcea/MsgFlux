@@ -20,7 +20,7 @@ public sealed partial class Publisher(
 {
     private static readonly ActivitySource ActivitySource = new("MsgFlux");
 
-    public async Task PublishAsync<T>(T message, CancellationToken ct = default)
+    public async Task PublishAsync<T>(T payload, CancellationToken ct = default)
     {
         using var activity = ActivitySource.StartActivity(nameof(PublishAsync), ActivityKind.Producer);
 
@@ -32,12 +32,12 @@ public sealed partial class Publisher(
                 headers["tracestate"] = activity.TraceStateString;
         }
 
-        var payload = serializer.Serialize(message);
+        var payloadBytes = serializer.Serialize(payload);
         var messageType = typeof(T);
 
-        if (payload.Length > options.MaxPayloadSizeKb * 1024)
+        if (payloadBytes.Length > options.MaxPayloadSizeKb * 1024)
         {
-            LogPayloadTooLarge(logger, payload.Length, messageType.Name, options.MaxPayloadSizeKb);
+            LogPayloadTooLarge(logger, payloadBytes.Length, messageType.Name, options.MaxPayloadSizeKb);
         }
 
         var consumers = registry.GetConsumers(messageType);
@@ -59,7 +59,7 @@ public sealed partial class Publisher(
             {
                 MessageId = messageId,
                 ConsumerId = c.ConsumerId,
-                Payload = payload,
+                Payload = payloadBytes,
                 Headers = headers,
                 MessageType = messageType.Name,
                 CreatedAt = now
