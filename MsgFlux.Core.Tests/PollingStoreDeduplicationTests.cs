@@ -153,9 +153,9 @@ public class PollingStoreDeduplicationTests
     }
 
     [Test]
-    public async Task Should_Clear_InFlight_When_OnProcessing_Fails()
+    public async Task Should_Clear_InFlight_When_Batch_Claim_Fails()
     {
-        // Arrange — store that fails on MarkAsProcessingAsync
+        // Arrange — store that fails on MarkAsProcessingBatchAsync
         var store = new FailMarkAsProcessingStore();
         var options = new MsgFluxOptions()
             .WithReplayInterval(TimeSpan.FromMilliseconds(30))
@@ -165,27 +165,24 @@ public class PollingStoreDeduplicationTests
 
         await store.PersistAsync([SeedMessage()]);
 
-        // Act — consume for 200ms. OnProcessing will fail on every dispatch.
-        // Without the fix, the message is stuck in _inFlight after the first yield
-        // and is never re-yielded (blocked forever).
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        // Act — consume for 300ms. OnProcessing enqueues the claim, but the
+        // batch flush fails at the next poll cycle. The flush error handler
+        // clears _inFlight, allowing the message to be re-yielded.
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
         var yieldCount = 0;
         try
         {
             await foreach (var item in source.StreamAsync(cts.Token))
             {
                 yieldCount++;
-                // Simulate the Engine calling OnProcessing — it fails
-                try { await item.OnProcessing!(CancellationToken.None); }
-                catch { /* Engine would skip dispatch */ }
+                await item.OnProcessing!(CancellationToken.None);
             }
         }
         catch (OperationCanceledException) { }
 
-        // Assert — message should be re-yielded on subsequent polls since
-        // OnProcessing failure clears the in-flight tracking.
+        // Assert — message should be re-yielded after batch claim failure cleared in-flight.
         Assert.That(yieldCount, Is.GreaterThanOrEqualTo(2),
-            $"Message was yielded only {yieldCount} time(s) — stuck in in-flight set after OnProcessing failure");
+            $"Message was yielded only {yieldCount} time(s) — stuck in in-flight set after batch claim failure");
     }
 
     private class FailMarkAsProcessingStore : IMessageStore
@@ -194,6 +191,8 @@ public class PollingStoreDeduplicationTests
         public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
             => _inner.PersistAsync(messages, ct);
         public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
+            => throw new InvalidOperationException("DB connection lost");
+        public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
             => throw new InvalidOperationException("DB connection lost");
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);

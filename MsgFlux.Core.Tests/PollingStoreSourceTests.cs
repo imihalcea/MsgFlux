@@ -6,10 +6,9 @@ namespace MsgFlux.Core.Tests;
 public class PollingStoreSourceTests
 {
     [Test]
-    public async Task Should_Defer_MarkAsProcessing_To_OnProcessing_Callback()
+    public async Task Should_Batch_MarkAsProcessing_Via_OnProcessing_Callback()
     {
-        // Arrange — store that fails on MarkAsProcessingAsync
-        var store = new FailMarkAsProcessingStore();
+        var store = new InMemoryMessageStore();
         var options = new MsgFluxOptions()
             .WithReplayInterval(TimeSpan.FromMilliseconds(50))
             .WithMaxDeadLetterRetries(10);
@@ -27,7 +26,7 @@ public class PollingStoreSourceTests
             CreatedAt = DateTimeOffset.UtcNow
         }]);
 
-        // Act — get the first yielded item
+        // Act — get the first yielded item and call OnProcessing
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
         DispatchItem? item = null;
         await foreach (var d in source.StreamAsync(cts.Token))
@@ -36,13 +35,18 @@ public class PollingStoreSourceTests
             break;
         }
 
-        // Assert — item is yielded with an OnProcessing callback
         Assert.That(item, Is.Not.Null);
         Assert.That(item!.OnProcessing, Is.Not.Null);
 
-        // The callback throws because the store fails — Engine would skip dispatch
-        Assert.ThrowsAsync<InvalidOperationException>(
-            () => item.OnProcessing!(CancellationToken.None));
+        // OnProcessing enqueues (does not write to store immediately)
+        await item.OnProcessing!(CancellationToken.None);
+        var msg = store.Messages[(Guid.Empty, "consumer-1")];
+        Assert.That(msg.State, Is.EqualTo(MessageState.Pending), "Claim should be deferred, not immediate");
+
+        // Flush via Complete — claim is now persisted
+        source.Complete();
+        msg = store.Messages[(Guid.Empty, "consumer-1")];
+        Assert.That(msg.State, Is.EqualTo(MessageState.Processing), "Claim should be flushed on Complete");
     }
 
     [Test]
@@ -96,6 +100,9 @@ public class PollingStoreSourceTests
         public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => throw new InvalidOperationException("DB connection lost");
 
+        public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
+            => throw new InvalidOperationException("DB connection lost");
+
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
 
@@ -125,6 +132,8 @@ public class PollingStoreSourceTests
             => _inner.PersistAsync(messages, ct);
         public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.MarkAsProcessingAsync(messageId, consumerId, ct);
+        public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
+            => _inner.MarkAsProcessingBatchAsync(items, ct);
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
         public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)

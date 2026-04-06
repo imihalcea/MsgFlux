@@ -17,6 +17,7 @@ public sealed partial class PollingStoreSource(
     ILogger<PollingStoreSource> logger) : IMessageSource
 {
     private readonly ConcurrentDictionary<(Guid MessageId, string ConsumerId), byte> _inFlight = new();
+    private readonly ConcurrentQueue<(Guid MessageId, string ConsumerId)> _pendingClaims = new();
     private readonly ConcurrentQueue<(Guid MessageId, string ConsumerId)> _pendingAcks = new();
 
     public async IAsyncEnumerable<DispatchItem> StreamAsync([EnumeratorCancellation] CancellationToken ct)
@@ -26,6 +27,7 @@ public sealed partial class PollingStoreSource(
 
         while (!ct.IsCancellationRequested)
         {
+            await FlushPendingClaimsAsync(ct);
             await FlushPendingAcksAsync(ct);
 
             IReadOnlyList<Message> batch;
@@ -77,11 +79,7 @@ public sealed partial class PollingStoreSource(
                 // starts when the Engine is ready to dispatch, not when the item is yielded.
                 yield return new DispatchItem(
                     Message: msg,
-                    OnProcessing: async c =>
-                    {
-                        try { await store.MarkAsProcessingAsync(msg.MessageId, msg.ConsumerId, c); }
-                        catch { _inFlight.TryRemove(key, out _); throw; }
-                    },
+                    OnProcessing: _ => { _pendingClaims.Enqueue((msg.MessageId, msg.ConsumerId)); return Task.CompletedTask; },
                     OnAck: ct2 => { _inFlight.TryRemove(key, out _); _pendingAcks.Enqueue((msg.MessageId, msg.ConsumerId)); return Task.CompletedTask; },
                     OnFail: (reason, c) => { _inFlight.TryRemove(key, out _); return store.MarkAsFailedAsync(msg.MessageId, msg.ConsumerId, reason, c); },
                     OnDeadLetter: (reason, c) => { _inFlight.TryRemove(key, out _); return store.DeadLetterAsync(msg.MessageId, msg.ConsumerId, reason, c); });
@@ -91,6 +89,29 @@ public sealed partial class PollingStoreSource(
             // Back off to avoid tight-looping SELECT queries on the store.
             if (yielded == 0)
                 await SafeDelay(pollInterval, ct);
+        }
+    }
+
+    private async Task FlushPendingClaimsAsync(CancellationToken ct)
+    {
+        if (_pendingClaims.IsEmpty) return;
+
+        var items = new List<(Guid, string)>();
+        while (_pendingClaims.TryDequeue(out var item))
+            items.Add(item);
+
+        if (items.Count == 0) return;
+
+        try
+        {
+            await store.MarkAsProcessingBatchAsync(items, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogClaimFlushError(logger, items.Count, ex);
+            // Restore: remove from in-flight so they can be re-fetched and retried.
+            foreach (var item in items)
+                _inFlight.TryRemove(item, out _);
         }
     }
 
@@ -131,9 +152,13 @@ public sealed partial class PollingStoreSource(
 
     public void Complete()
     {
-        // Flush remaining acks synchronously on shutdown.
+        // Flush remaining claims and acks synchronously on shutdown.
+        FlushPendingClaimsAsync(CancellationToken.None).GetAwaiter().GetResult();
         FlushPendingAcksAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
+
+    [LoggerMessage(LogLevel.Error, "Failed to flush {Count} pending claims")]
+    static partial void LogClaimFlushError(ILogger logger, int count, Exception ex);
 
     [LoggerMessage(LogLevel.Error, "Failed to flush {Count} pending acks")]
     static partial void LogAckFlushError(ILogger logger, int count, Exception ex);

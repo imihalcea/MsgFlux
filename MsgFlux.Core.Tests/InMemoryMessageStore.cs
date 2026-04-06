@@ -30,6 +30,12 @@ public class InMemoryMessageStore : IMessageStore
         return Task.CompletedTask;
     }
 
+    public async Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
+    {
+        foreach (var (messageId, consumerId) in items)
+            await MarkAsProcessingAsync(messageId, consumerId, ct);
+    }
+
     public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
     {
         var key = (messageId, consumerId);
@@ -110,6 +116,9 @@ public class FailingMessageStore : IMessageStore
         => throw new InvalidOperationException("Store unavailable");
 
     public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
+        => throw new InvalidOperationException("Store unavailable");
+
+    public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
     public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)

@@ -113,6 +113,23 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
+    {
+        if (items.Count == 0) return;
+
+        const string sql = """
+            UPDATE msgflux_messages SET state = $1, processed_at = $2
+            WHERE (message_id, consumer_id) IN (SELECT unnest($3), unnest($4))
+            """;
+
+        await using var cmd = dataSource.CreateCommand(sql);
+        cmd.Parameters.AddWithValue((short)MessageState.Processing);
+        cmd.Parameters.AddWithValue(clock.UtcNow);
+        cmd.Parameters.AddWithValue(items.Select(i => i.MessageId).ToArray());
+        cmd.Parameters.AddWithValue(items.Select(i => i.ConsumerId).ToArray());
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
     {
         const string sql = """
@@ -132,25 +149,16 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
     {
         if (items.Count == 0) return;
 
-        // Build: UPDATE ... WHERE (message_id, consumer_id) IN (($1,$2), ($3,$4), ...)
-        var sb = new StringBuilder(
-            "UPDATE msgflux_messages SET state = ");
-        sb.Append((short)MessageState.Completed);
-        sb.Append(", processed_at = $1 WHERE (message_id, consumer_id) IN (");
+        const string sql = """
+            UPDATE msgflux_messages SET state = $1, processed_at = $2
+            WHERE (message_id, consumer_id) IN (SELECT unnest($3), unnest($4))
+            """;
 
-        await using var cmd = dataSource.CreateCommand();
+        await using var cmd = dataSource.CreateCommand(sql);
+        cmd.Parameters.AddWithValue((short)MessageState.Completed);
         cmd.Parameters.AddWithValue(clock.UtcNow);
-        var p = 2;
-        for (var i = 0; i < items.Count; i++)
-        {
-            if (i > 0) sb.Append(", ");
-            sb.Append("($").Append(p++).Append(", $").Append(p++).Append(')');
-            cmd.Parameters.AddWithValue(items[i].MessageId);
-            cmd.Parameters.AddWithValue(items[i].ConsumerId);
-        }
-        sb.Append(')');
-
-        cmd.CommandText = sb.ToString();
+        cmd.Parameters.AddWithValue(items.Select(i => i.MessageId).ToArray());
+        cmd.Parameters.AddWithValue(items.Select(i => i.ConsumerId).ToArray());
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
