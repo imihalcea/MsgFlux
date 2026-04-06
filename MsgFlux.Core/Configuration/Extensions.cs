@@ -68,14 +68,15 @@ public static class Extensions
 
 /// <summary>
 /// Placeholder IMessageSource used when no durable store is registered; yields nothing.
+/// Waits until cancelled to avoid tight-looping in the engine's consume loop.
 /// </summary>
 internal sealed class NullMessageSource : IMessageSource
 {
-#pragma warning disable CS1998
     public async IAsyncEnumerable<DispatchItem> StreamAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
+        try { await Task.Delay(Timeout.Infinite, ct); }
+        catch (OperationCanceledException) { }
         yield break;
     }
-#pragma warning restore CS1998
 }

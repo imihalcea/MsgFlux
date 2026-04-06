@@ -72,40 +72,15 @@ public partial class EngineService : BackgroundService
 
     private async Task ConsumeSourceAsync(IMessageSource source, CancellationToken ct)
     {
-        var parallelOptions = new ParallelOptions
-        {
-            CancellationToken = ct,
-            MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism > 0
-                ? _options.MaxDegreeOfParallelism
-                : Environment.ProcessorCount
-        };
-
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                await Parallel.ForEachAsync(source.StreamAsync(ct), parallelOptions, async (item, token) =>
+                await foreach (var item in source.StreamAsync(ct))
                 {
-                    await _globalThrottle.WaitAsync(token);
-                    try
-                    {
-                        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                        timeoutCts.CancelAfter(_options.StaleProcessingTimeout);
-                        await DispatchAsync(item, timeoutCts.Token, token);
-                    }
-                    catch (OperationCanceledException) when (token.IsCancellationRequested)
-                    {
-                        // shutdown
-                    }
-                    catch (Exception ex)
-                    {
-                        LogProcessingError(_logger, item.Message.MessageType, ex);
-                    }
-                    finally
-                    {
-                        _globalThrottle.Release();
-                    }
-                });
+                    await _globalThrottle.WaitAsync(ct);
+                    _ = DispatchWithThrottleAsync(item, ct);
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -114,6 +89,28 @@ public partial class EngineService : BackgroundService
                 try { await Task.Delay(_options.ReplayInterval, ct); }
                 catch (OperationCanceledException) { break; }
             }
+        }
+    }
+
+    private async Task DispatchWithThrottleAsync(DispatchItem item, CancellationToken ct)
+    {
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(_options.StaleProcessingTimeout);
+            await DispatchAsync(item, timeoutCts.Token, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // shutdown
+        }
+        catch (Exception ex)
+        {
+            LogProcessingError(_logger, item.Message.MessageType, ex);
+        }
+        finally
+        {
+            _globalThrottle.Release();
         }
     }
 
