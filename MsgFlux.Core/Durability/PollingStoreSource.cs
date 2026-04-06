@@ -57,13 +57,11 @@ public sealed partial class PollingStoreSource(
                     continue;
                 }
 
-                // Claim the row before yielding so the next poll cycle won't see it.
-                // If the claim fails (e.g. DB blip), skip this message — the next poll will retry.
-                if (!await TryInvoke(() => store.MarkAsProcessingAsync(msg.MessageId, msg.ConsumerId, ct), msg, "MarkAsProcessing"))
-                    continue;
-
+                // Claim is deferred to OnProcessing so the stale-processing timeout
+                // starts when the Engine is ready to dispatch, not when the item is yielded.
                 yield return new DispatchItem(
                     Message: msg,
+                    OnProcessing: c => store.MarkAsProcessingAsync(msg.MessageId, msg.ConsumerId, c),
                     OnAck: c => store.AcknowledgeAsync(msg.MessageId, msg.ConsumerId, c),
                     OnFail: (reason, c) => store.MarkAsFailedAsync(msg.MessageId, msg.ConsumerId, reason, c),
                     OnDeadLetter: (reason, c) => store.DeadLetterAsync(msg.MessageId, msg.ConsumerId, reason, c));
@@ -79,16 +77,6 @@ public sealed partial class PollingStoreSource(
     {
         try { await Task.Delay(delay, ct); }
         catch (OperationCanceledException) { }
-    }
-
-    private async Task<bool> TryInvoke(Func<Task> action, Message msg, string op)
-    {
-        try { await action(); return true; }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            LogOperationError(logger, op, msg.MessageId, msg.ConsumerId, ex);
-            return false;
-        }
     }
 
     private async Task SafeInvoke(Func<Task> action, Message msg, string op)

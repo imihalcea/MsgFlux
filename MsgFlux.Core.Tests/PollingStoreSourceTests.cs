@@ -6,7 +6,7 @@ namespace MsgFlux.Core.Tests;
 public class PollingStoreSourceTests
 {
     [Test]
-    public async Task Should_Not_Dispatch_When_MarkAsProcessing_Fails()
+    public async Task Should_Defer_MarkAsProcessing_To_OnProcessing_Callback()
     {
         // Arrange — store that fails on MarkAsProcessingAsync
         var store = new FailMarkAsProcessingStore();
@@ -16,7 +16,6 @@ public class PollingStoreSourceTests
 
         var source = new PollingStoreSource(store, options, NullLogger<PollingStoreSource>.Instance);
 
-        // Seed a pending message
         await store.PersistAsync([new Message
         {
             MessageId = "msg-1",
@@ -28,20 +27,22 @@ public class PollingStoreSourceTests
             CreatedAt = DateTimeOffset.UtcNow
         }]);
 
-        // Act — consume from the source for a short window
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        var dispatched = new List<DispatchItem>();
-        try
+        // Act — get the first yielded item
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        DispatchItem? item = null;
+        await foreach (var d in source.StreamAsync(cts.Token))
         {
-            await foreach (var item in source.StreamAsync(cts.Token))
-            {
-                dispatched.Add(item);
-            }
+            item = d;
+            break;
         }
-        catch (OperationCanceledException) { }
 
-        // Assert — message should NOT have been dispatched since claim failed
-        Assert.That(dispatched, Has.Count.EqualTo(0));
+        // Assert — item is yielded with an OnProcessing callback
+        Assert.That(item, Is.Not.Null);
+        Assert.That(item!.OnProcessing, Is.Not.Null);
+
+        // The callback throws because the store fails — Engine would skip dispatch
+        Assert.ThrowsAsync<InvalidOperationException>(
+            () => item.OnProcessing!(CancellationToken.None));
     }
 
     [Test]

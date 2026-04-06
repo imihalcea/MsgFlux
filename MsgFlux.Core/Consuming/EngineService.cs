@@ -144,7 +144,10 @@ public partial class EngineService : BackgroundService
         }
 
         if (item.OnProcessing is not null)
-            await SafeInvoke(() => item.OnProcessing(engineToken), msg, "OnProcessing");
+        {
+            if (!await TryInvoke(() => item.OnProcessing(engineToken), msg, "OnProcessing"))
+                return; // Claim failed — skip dispatch, next poll will retry.
+        }
 
         var message = DeserializeMessage(msg, messageType);
         if (message is null)
@@ -241,6 +244,16 @@ public partial class EngineService : BackgroundService
             LogConsumerError(_logger, consumerName, ex);
             Activity.Current?.SetStatus(ActivityStatusCode.Error, ex.Message);
             return ConsumerOutcome.Failed;
+        }
+    }
+
+    private async Task<bool> TryInvoke(Func<Task> action, Message msg, string op)
+    {
+        try { await action(); return true; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogCallbackError(_logger, op, msg.MessageId, msg.ConsumerId, ex);
+            return false;
         }
     }
 
