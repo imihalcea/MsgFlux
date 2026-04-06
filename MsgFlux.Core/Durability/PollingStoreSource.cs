@@ -86,9 +86,10 @@ public sealed partial class PollingStoreSource(
             }
 
             // Nothing new dispatched — all filtered by dedup or dead-lettered.
-            // Back off to avoid tight-looping SELECT queries on the store.
+            // Short backoff to avoid tight-looping, but not the full poll interval
+            // so new messages arriving shortly after are picked up fast.
             if (yielded == 0)
-                await SafeDelay(pollInterval, ct);
+                await SafeDelay(TimeSpan.FromMilliseconds(50), ct);
         }
     }
 
