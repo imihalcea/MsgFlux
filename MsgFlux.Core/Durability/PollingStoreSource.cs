@@ -17,6 +17,7 @@ public sealed partial class PollingStoreSource(
     ILogger<PollingStoreSource> logger) : IMessageSource
 {
     private readonly ConcurrentDictionary<(Guid MessageId, string ConsumerId), byte> _inFlight = new();
+    private readonly ConcurrentQueue<(Guid MessageId, string ConsumerId)> _pendingAcks = new();
 
     public async IAsyncEnumerable<DispatchItem> StreamAsync([EnumeratorCancellation] CancellationToken ct)
     {
@@ -25,6 +26,8 @@ public sealed partial class PollingStoreSource(
 
         while (!ct.IsCancellationRequested)
         {
+            await FlushPendingAcksAsync(ct);
+
             IReadOnlyList<Message> batch;
             try
             {
@@ -48,6 +51,8 @@ public sealed partial class PollingStoreSource(
                 continue;
             }
 
+            var yielded = 0;
+
             foreach (var msg in batch)
             {
                 if (ct.IsCancellationRequested) yield break;
@@ -66,6 +71,8 @@ public sealed partial class PollingStoreSource(
                     continue;
                 }
 
+                yielded++;
+
                 // Claim is deferred to OnProcessing so the stale-processing timeout
                 // starts when the Engine is ready to dispatch, not when the item is yielded.
                 yield return new DispatchItem(
@@ -75,14 +82,35 @@ public sealed partial class PollingStoreSource(
                         try { await store.MarkAsProcessingAsync(msg.MessageId, msg.ConsumerId, c); }
                         catch { _inFlight.TryRemove(key, out _); throw; }
                     },
-                    OnAck: c => { _inFlight.TryRemove(key, out _); return store.AcknowledgeAsync(msg.MessageId, msg.ConsumerId, c); },
+                    OnAck: ct2 => { _inFlight.TryRemove(key, out _); _pendingAcks.Enqueue((msg.MessageId, msg.ConsumerId)); return Task.CompletedTask; },
                     OnFail: (reason, c) => { _inFlight.TryRemove(key, out _); return store.MarkAsFailedAsync(msg.MessageId, msg.ConsumerId, reason, c); },
                     OnDeadLetter: (reason, c) => { _inFlight.TryRemove(key, out _); return store.DeadLetterAsync(msg.MessageId, msg.ConsumerId, reason, c); });
             }
 
-            // Brief pause between non-empty batches to avoid hammering the store
-            // when messages keep failing and cycling through Pending/Failed states.
-            await SafeDelay(pollInterval, ct);
+            // Nothing new dispatched — all filtered by dedup or dead-lettered.
+            // Back off to avoid tight-looping SELECT queries on the store.
+            if (yielded == 0)
+                await SafeDelay(pollInterval, ct);
+        }
+    }
+
+    private async Task FlushPendingAcksAsync(CancellationToken ct)
+    {
+        if (_pendingAcks.IsEmpty) return;
+
+        var items = new List<(Guid, string)>();
+        while (_pendingAcks.TryDequeue(out var item))
+            items.Add(item);
+
+        if (items.Count == 0) return;
+
+        try
+        {
+            await store.AcknowledgeBatchAsync(items, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogAckFlushError(logger, items.Count, ex);
         }
     }
 
@@ -101,7 +129,14 @@ public sealed partial class PollingStoreSource(
         }
     }
 
-    public void Complete() { } // Durable store needs no completion — messages persist independently.
+    public void Complete()
+    {
+        // Flush remaining acks synchronously on shutdown.
+        FlushPendingAcksAsync(CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    [LoggerMessage(LogLevel.Error, "Failed to flush {Count} pending acks")]
+    static partial void LogAckFlushError(ILogger logger, int count, Exception ex);
 
     [LoggerMessage(LogLevel.Error, "Error fetching unprocessed messages from durable store")]
     static partial void LogFetchError(ILogger logger, Exception ex);

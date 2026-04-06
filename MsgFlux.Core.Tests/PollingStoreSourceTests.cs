@@ -46,13 +46,12 @@ public class PollingStoreSourceTests
     }
 
     [Test]
-    public async Task Should_Backoff_Between_NonEmpty_Batches()
+    public async Task Should_Not_Reyield_InFlight_Messages_On_Rapid_Polls()
     {
-        // Arrange — store with a message that will be fetched repeatedly
+        // Arrange — a message that stays Pending (no OnAck) across rapid poll cycles
         var store = new FetchCountingStore();
-        var pollInterval = TimeSpan.FromMilliseconds(200);
         var options = new MsgFluxOptions()
-            .WithReplayInterval(pollInterval)
+            .WithReplayInterval(TimeSpan.FromMilliseconds(50))
             .WithMaxDeadLetterRetries(100);
 
         var source = new PollingStoreSource(store, options, NullLogger<PollingStoreSource>.Instance);
@@ -68,16 +67,20 @@ public class PollingStoreSourceTests
             CreatedAt = DateTimeOffset.UtcNow
         }]);
 
-        // Act — consume for 500ms (with 200ms interval, expect ~2-3 fetches, not dozens)
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        // Act — consume for 300ms with rapid polling (50ms). Multiple polls will
+        // fetch the same message, but in-flight dedup should yield it only once.
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        var yieldCount = 0;
         try
         {
-            await foreach (var _ in source.StreamAsync(cts.Token)) { }
+            await foreach (var _ in source.StreamAsync(cts.Token))
+                yieldCount++;
         }
         catch (OperationCanceledException) { }
 
-        // Assert — without backoff this would be 50+ fetches; with backoff expect ≤ 5
-        Assert.That(store.FetchCount, Is.LessThanOrEqualTo(5));
+        // Assert — message yielded only once despite multiple poll cycles
+        Assert.That(yieldCount, Is.EqualTo(1));
+        Assert.That(store.FetchCount, Is.GreaterThan(1), "Store should have been polled multiple times");
     }
 
     /// <summary>
@@ -95,6 +98,9 @@ public class PollingStoreSourceTests
 
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
+
+        public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
+            => _inner.AcknowledgeBatchAsync(items, ct);
 
         public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
@@ -121,6 +127,8 @@ public class PollingStoreSourceTests
             => _inner.MarkAsProcessingAsync(messageId, consumerId, ct);
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
+        public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
+            => _inner.AcknowledgeBatchAsync(items, ct);
         public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
         public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)

@@ -103,12 +103,14 @@ builder.Services.AddMsgFluxPostgres("...", opts => opts.AutoCreateSchema = false
 
 ### How durable delivery works
 
-1. **Publish**: messages are buffered and flushed to the store in batch
-2. **Poll**: a background loop fetches unprocessed messages and dispatches them to consumers
-3. **Ack/Fail**: on success the message is marked `Completed`; on failure it is marked `Failed` with retry count incremented
-4. **Retry**: failed messages are picked up on the next poll cycle and re-dispatched
-5. **Dead-letter**: messages exceeding `MaxDeadLetterRetries` are moved to `DeadLettered` state
-6. **Purge**: a background service periodically deletes old completed messages
+1. **Publish**: messages are buffered and flushed to the store in batch (configurable threshold/interval)
+2. **Poll**: a background loop fetches unprocessed messages every `ReplayInterval` (default 1s) and dispatches them to consumers
+3. **Claim**: each message is marked `Processing` just before consumer invocation (deferred to minimize stale-timeout risk)
+4. **Ack**: successful completions are batched and flushed to the store in a single round-trip at the next poll cycle
+5. **Fail**: on failure the message is marked `Failed` immediately with retry count incremented
+6. **Retry**: failed messages are picked up on the next poll cycle and re-dispatched (in-flight deduplication prevents duplicate dispatch)
+7. **Dead-letter**: messages exceeding `MaxDeadLetterRetries` are moved to `DeadLettered` state
+8. **Purge**: a background service periodically deletes old completed messages
 
 ### Message lifecycle
 
@@ -171,7 +173,7 @@ builder.Services.AddMsgFlux(options =>
 | `MaxDeadLetterRetries` | 3 | Failed messages beyond this count are dead-lettered |
 | `MaxPayloadSizeKb` | 64 | Publish rejects payloads larger than this |
 | `ChannelCapacity` | 1000 | Bounded channel size for AtMostOnce consumers |
-| `ReplayInterval` | 5s | Polling interval for durable message replay |
+| `ReplayInterval` | 1s | Polling interval for durable message replay and ack flush |
 | `PollingBatchSize` | 500 | Max messages fetched per poll cycle |
 | `BufferFlushThreshold` | 1 | Flush durable buffer when this many messages accumulate (1 = immediate) |
 | `BufferFlushInterval` | 0 | Periodic flush interval (0 = only flush on threshold) |

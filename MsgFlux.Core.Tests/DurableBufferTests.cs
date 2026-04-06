@@ -93,6 +93,8 @@ public class DurableBufferTests
             => _inner.MarkAsProcessingAsync(messageId, consumerId, ct);
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
+        public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
+            => _inner.AcknowledgeBatchAsync(items, ct);
         public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
         public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
@@ -129,6 +131,8 @@ public class DurableBufferTests
         public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => Task.CompletedTask;
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
             => Task.CompletedTask;
         public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => Task.CompletedTask;

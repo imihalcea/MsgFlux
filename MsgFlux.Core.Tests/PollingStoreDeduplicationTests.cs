@@ -99,8 +99,9 @@ public class PollingStoreDeduplicationTests
                 if (yieldCount == 1)
                 {
                     await item.OnAck!(CancellationToken.None);
-                    // Re-seed with same key — force back to Pending to simulate re-publish
-                    store.Messages[(Guid.Empty, "consumer-1")] = SeedMessage();
+                    // Seed a new message — the original is acked (batch pending),
+                    // this verifies that _inFlight tracking doesn't block new messages.
+                    await store.PersistAsync([SeedMessage(Guid.NewGuid())]);
                 }
                 else
                 {
@@ -196,6 +197,8 @@ public class PollingStoreDeduplicationTests
             => throw new InvalidOperationException("DB connection lost");
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
+        public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
+            => _inner.AcknowledgeBatchAsync(items, ct);
         public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
         public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
@@ -207,9 +210,9 @@ public class PollingStoreDeduplicationTests
             => _inner.PurgeCompletedAsync(olderThan, ct);
     }
 
-    private static Message SeedMessage() => new()
+    private static Message SeedMessage(Guid? id = null) => new()
     {
-        MessageId = Guid.Empty,
+        MessageId = id ?? Guid.Empty,
         ConsumerId = "consumer-1",
         Payload = [0x01],
         Headers = new Dictionary<string, string>(),

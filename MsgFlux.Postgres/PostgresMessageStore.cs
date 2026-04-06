@@ -128,6 +128,32 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
+    {
+        if (items.Count == 0) return;
+
+        // Build: UPDATE ... WHERE (message_id, consumer_id) IN (($1,$2), ($3,$4), ...)
+        var sb = new StringBuilder(
+            "UPDATE msgflux_messages SET state = ");
+        sb.Append((short)MessageState.Completed);
+        sb.Append(", processed_at = $1 WHERE (message_id, consumer_id) IN (");
+
+        await using var cmd = dataSource.CreateCommand();
+        cmd.Parameters.AddWithValue(clock.UtcNow);
+        var p = 2;
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append("($").Append(p++).Append(", $").Append(p++).Append(')');
+            cmd.Parameters.AddWithValue(items[i].MessageId);
+            cmd.Parameters.AddWithValue(items[i].ConsumerId);
+        }
+        sb.Append(')');
+
+        cmd.CommandText = sb.ToString();
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
     {
         const string sql = """

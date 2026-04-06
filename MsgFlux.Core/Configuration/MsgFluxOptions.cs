@@ -12,7 +12,7 @@ public class MsgFluxOptions
     public int MaxDeadLetterRetries { get; set; } = 3;
     public TimeSpan PurgeOlderThan { get; set; } = TimeSpan.FromDays(7);
     public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromHours(1);
-    public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(5);
+    public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(1);
     public int PollingBatchSize { get; set; } = 500;
     public TimeSpan BufferFlushInterval { get; set; } = TimeSpan.Zero;
     public int BufferFlushThreshold { get; set; } = 1;
