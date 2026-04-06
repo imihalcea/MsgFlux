@@ -8,9 +8,9 @@ namespace MsgFlux.Core;
 /// when the count threshold is reached or the periodic interval fires — whichever comes first.
 /// </summary>
 public sealed partial class DurableBuffer(
-    IMessageStore store,
     MsgFluxOptions options,
-    ILogger<DurableBuffer> logger) : IAsyncDisposable
+    ILogger<DurableBuffer> logger,
+    IMessageStore? store = null) : IAsyncDisposable
 {
     private readonly Lock _lock = new();
     private List<Message> _buffer = [];
@@ -40,7 +40,7 @@ public sealed partial class DurableBuffer(
             _buffer = [];
         }
 
-        await store.PersistAsync(batch, CancellationToken.None);
+        await store!.PersistAsync(batch, CancellationToken.None);
     }
 
     private async Task FlushLoopAsync(CancellationToken ct)

@@ -18,7 +18,8 @@ public class PublisherTests
         var inMemory = new InMemoryMessageSource(options);
         var serializer = new JsonSerializer();
         var logger = NullLogger<Publisher>.Instance;
-        var publisher = new Publisher(inMemory, registry, serializer, options, logger);
+        var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance);
+        var publisher = new Publisher(inMemory, registry, serializer, options, logger, buffer);
 
         using var activityListener = new ActivityListener();
         activityListener.ShouldListenTo = s => s.Name == "MsgFlux";
@@ -52,11 +53,12 @@ public class PublisherTests
         var inMemory = new InMemoryMessageSource(options);
         var serializer = new JsonSerializer();
         var logger = new TestLogger<Publisher>();
-        var publisher = new Publisher(inMemory, registry, serializer, options, logger);
+        var durableBuffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance);
+        var publisher = new Publisher(inMemory, registry, serializer, options, logger, durableBuffer);
 
-        var buffer = new byte[2048];
-        new Random().NextBytes(buffer);
-        var largeContent = Convert.ToBase64String(buffer);
+        var bytes = new byte[2048];
+        new Random().NextBytes(bytes);
+        var largeContent = Convert.ToBase64String(bytes);
 
         await publisher.PublishAsync(new TestEvent { Content = largeContent });
 

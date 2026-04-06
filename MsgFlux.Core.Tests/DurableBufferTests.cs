@@ -11,7 +11,7 @@ public class DurableBufferTests
         var store = new InMemoryMessageStore();
         var options = new MsgFluxOptions().WithBufferedPublishing(
             flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 3);
-        await using var buffer = new DurableBuffer(store, options, NullLogger<DurableBuffer>.Instance);
+        await using var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
 
         await buffer.AddAsync(MakeMessages(3));
 
@@ -24,7 +24,7 @@ public class DurableBufferTests
         var store = new InMemoryMessageStore();
         var options = new MsgFluxOptions().WithBufferedPublishing(
             flushInterval: TimeSpan.FromMilliseconds(50), flushThreshold: 100);
-        await using var buffer = new DurableBuffer(store, options, NullLogger<DurableBuffer>.Instance);
+        await using var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
 
         await buffer.AddAsync(MakeMessages(2));
 
@@ -43,7 +43,7 @@ public class DurableBufferTests
         var store = new InMemoryMessageStore();
         var options = new MsgFluxOptions().WithBufferedPublishing(
             flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 100);
-        var buffer = new DurableBuffer(store, options, NullLogger<DurableBuffer>.Instance);
+        var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
 
         await buffer.AddAsync(MakeMessages(5));
         Assert.That(store.Messages, Has.Count.EqualTo(0));

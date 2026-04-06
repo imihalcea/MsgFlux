@@ -31,11 +31,7 @@ public static class Extensions
         services.AddSingleton<InMemoryMessageSource>();
         services.AddSingleton<IMessageSource>(sp => sp.GetRequiredService<InMemoryMessageSource>());
 
-        if (options.IsBufferedPublishing)
-        {
-            services.AddSingleton<DurableBuffer>();
-        }
-
+        services.AddSingleton<DurableBuffer>();
         services.AddSingleton<IPublish, Publisher>();
         services.AddSingleton<IMessageSource>(sp =>
         {

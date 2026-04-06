@@ -15,8 +15,7 @@ public class MsgFluxOptions
     public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(5);
     public int PollingBatchSize { get; set; } = 500;
     public TimeSpan BufferFlushInterval { get; set; } = TimeSpan.Zero;
-    public int BufferFlushThreshold { get; set; }
-    internal bool IsBufferedPublishing => BufferFlushThreshold > 0 || BufferFlushInterval > TimeSpan.Zero;
+    public int BufferFlushThreshold { get; set; } = 1;
 
     internal List<Action<IServiceCollection, Registry>> ConsumerRegistrations { get; } = new();
 
