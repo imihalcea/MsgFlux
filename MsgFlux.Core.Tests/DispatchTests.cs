@@ -69,7 +69,7 @@ public class DispatchTests
         {
             new Message
             {
-                MessageId = Guid.NewGuid().ToString(),
+                MessageId = Guid.NewGuid(),
                 ConsumerId = consumerId,
                 Payload = [0xDE, 0xAD, 0xBE, 0xEF], // Invalid Brotli/JSON
                 Headers = new Dictionary<string, string>(),

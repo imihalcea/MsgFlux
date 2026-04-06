@@ -16,7 +16,7 @@ public sealed partial class PollingStoreSource(
     MsgFluxOptions options,
     ILogger<PollingStoreSource> logger) : IMessageSource
 {
-    private readonly ConcurrentDictionary<(string MessageId, string ConsumerId), byte> _inFlight = new();
+    private readonly ConcurrentDictionary<(Guid MessageId, string ConsumerId), byte> _inFlight = new();
 
     public async IAsyncEnumerable<DispatchItem> StreamAsync([EnumeratorCancellation] CancellationToken ct)
     {
@@ -107,5 +107,5 @@ public sealed partial class PollingStoreSource(
     static partial void LogFetchError(ILogger logger, Exception ex);
 
     [LoggerMessage(LogLevel.Error, "Store operation {Operation} failed for message {MessageId} / consumer {ConsumerId}")]
-    static partial void LogOperationError(ILogger logger, string operation, string messageId, string consumerId, Exception ex);
+    static partial void LogOperationError(ILogger logger, string operation, Guid messageId, string consumerId, Exception ex);
 }

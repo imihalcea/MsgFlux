@@ -15,7 +15,7 @@ public class MessagePurgeServiceTests
         // Persist and complete an old message
         var oldMsg = new Message
         {
-            MessageId = Guid.NewGuid().ToString(),
+            MessageId = Guid.NewGuid(),
             ConsumerId = consumerId,
             Payload = [0x01],
             Headers = new Dictionary<string, string>(),
@@ -29,7 +29,7 @@ public class MessagePurgeServiceTests
         // Persist and complete a recent message (should NOT be purged)
         var recentMsg = new Message
         {
-            MessageId = Guid.NewGuid().ToString(),
+            MessageId = Guid.NewGuid(),
             ConsumerId = consumerId,
             Payload = [0x02],
             Headers = new Dictionary<string, string>(),

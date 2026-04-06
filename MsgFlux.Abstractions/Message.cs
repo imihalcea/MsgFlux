@@ -2,7 +2,7 @@ namespace MsgFlux.Abstractions;
 
 public record Message
 {
-    public required string MessageId { get; init; }
+    public required Guid MessageId { get; init; }
     /// <summary>
     /// Stable hash of the target consumer's concrete type FullName. One row per (MessageId, ConsumerId).
     /// </summary>

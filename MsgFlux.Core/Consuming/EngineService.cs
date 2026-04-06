@@ -307,8 +307,8 @@ public partial class EngineService : BackgroundService
     static partial void LogRetryAttempt(ILogger<EngineService> logger, int attemptNumber, string errorMessage);
 
     [LoggerMessage(LogLevel.Warning, "Message {messageId} processing timed out after {timeout}")]
-    static partial void LogProcessingTimeout(ILogger<EngineService> logger, string messageId, TimeSpan timeout);
+    static partial void LogProcessingTimeout(ILogger<EngineService> logger, Guid messageId, TimeSpan timeout);
 
     [LoggerMessage(LogLevel.Error, "Source callback {operation} failed for message {messageId} / consumer {consumerId}")]
-    static partial void LogCallbackError(ILogger<EngineService> logger, string operation, string messageId, string consumerId, Exception ex);
+    static partial void LogCallbackError(ILogger<EngineService> logger, string operation, Guid messageId, string consumerId, Exception ex);
 }

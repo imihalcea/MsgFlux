@@ -20,13 +20,13 @@ public class PostgresMessageStoreTests
     }
 
     private Message CreateMessage(
-        string? id = null,
+        Guid? id = null,
         string consumerId = DefaultConsumerId,
         string messageType = "TestMessage",
         MessageState state = MessageState.Pending,
         DateTimeOffset? createdAt = null) => new()
     {
-        MessageId = id ?? Guid.NewGuid().ToString(),
+        MessageId = id ?? Guid.NewGuid(),
         ConsumerId = consumerId,
         Payload = [0x01, 0x02, 0x03],
         Headers = new Dictionary<string, string> { ["key"] = "value" },
@@ -70,7 +70,7 @@ public class PostgresMessageStoreTests
     [Test]
     public async Task PersistAsync_Should_Allow_Same_MessageId_For_Different_Consumers()
     {
-        var messageId = Guid.NewGuid().ToString();
+        var messageId = Guid.NewGuid();
         await PersistOne(CreateMessage(id: messageId, consumerId: "consumer-a"));
         await PersistOne(CreateMessage(id: messageId, consumerId: "consumer-b"));
 
@@ -103,9 +103,9 @@ public class PostgresMessageStoreTests
     {
         // Two concurrent PersistAsync calls use separate connections with separate temp tables.
         var batch1 = Enumerable.Range(0, 50)
-            .Select(i => CreateMessage(id: $"batch1-{i}")).ToList();
+            .Select(_ => CreateMessage()).ToList();
         var batch2 = Enumerable.Range(0, 50)
-            .Select(i => CreateMessage(id: $"batch2-{i}")).ToList();
+            .Select(_ => CreateMessage()).ToList();
 
         await Task.WhenAll(
             _store.PersistAsync(batch1),
@@ -121,9 +121,9 @@ public class PostgresMessageStoreTests
         // Two sequential PersistAsync calls may reuse the same pooled connection.
         // The temp table TRUNCATE must prevent stale rows from the first call.
         var batch1 = Enumerable.Range(0, 10)
-            .Select(i => CreateMessage(id: $"seq1-{i}")).ToList();
+            .Select(_ => CreateMessage()).ToList();
         var batch2 = Enumerable.Range(0, 10)
-            .Select(i => CreateMessage(id: $"seq2-{i}")).ToList();
+            .Select(_ => CreateMessage()).ToList();
 
         await _store.PersistAsync(batch1);
         await _store.PersistAsync(batch2);
@@ -268,16 +268,18 @@ public class PostgresMessageStoreTests
     [Test]
     public async Task FetchUnprocessedAsync_Should_Order_By_CreatedAt_Asc()
     {
-        var first = CreateMessage(id: "msg-1", createdAt: _clock.UtcNow);
+        var firstId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        var first = CreateMessage(id: firstId, createdAt: _clock.UtcNow);
         _clock.Advance(TimeSpan.FromSeconds(1));
-        var second = CreateMessage(id: "msg-2", createdAt: _clock.UtcNow);
+        var second = CreateMessage(id: secondId, createdAt: _clock.UtcNow);
 
         await PersistOne(first);
         await PersistOne(second);
 
         var fetched = await _store.FetchUnprocessedAsync(maxCount: 10);
-        Assert.That(fetched[0].MessageId, Is.EqualTo("msg-1"));
-        Assert.That(fetched[1].MessageId, Is.EqualTo("msg-2"));
+        Assert.That(fetched[0].MessageId, Is.EqualTo(firstId));
+        Assert.That(fetched[1].MessageId, Is.EqualTo(secondId));
     }
 
     // --- PurgeCompletedAsync ---

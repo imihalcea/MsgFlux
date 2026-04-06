@@ -43,7 +43,7 @@ public class EngineSourceRecoveryTests
         var consumerId = Registry.GetConsumerId(typeof(RecoveryHandler));
         crashingSource.Inject(new Message
         {
-            MessageId = Guid.NewGuid().ToString(),
+            MessageId = Guid.NewGuid(),
             ConsumerId = consumerId,
             Payload = serializer.Serialize(new RecoveryMessage { Value = "after-crash" }),
             Headers = new Dictionary<string, string>(),

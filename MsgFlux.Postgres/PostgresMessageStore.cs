@@ -16,7 +16,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
         // Create a temp table, COPY into it, then INSERT ... ON CONFLICT to handle duplicates.
         await using var createTemp = new NpgsqlCommand("""
             CREATE TEMP TABLE IF NOT EXISTS _msgflux_bulk (
-                message_id TEXT, consumer_id TEXT, payload BYTEA,
+                message_id UUID, consumer_id TEXT, payload BYTEA,
                 headers JSONB, message_type TEXT, state SMALLINT,
                 retry_count INT, created_at TIMESTAMPTZ
             )
@@ -33,7 +33,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
         foreach (var m in messages)
         {
             await writer.StartRowAsync(ct);
-            await writer.WriteAsync(m.MessageId, NpgsqlDbType.Text, ct);
+            await writer.WriteAsync(m.MessageId, NpgsqlDbType.Uuid, ct);
             await writer.WriteAsync(m.ConsumerId, NpgsqlDbType.Text, ct);
             await writer.WriteAsync(m.Payload, NpgsqlDbType.Bytea, ct);
             await writer.WriteAsync(JsonSerializer.Serialize(m.Headers), NpgsqlDbType.Jsonb, ct);
@@ -55,7 +55,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
         await merge.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+    public async Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
     {
         const string sql = """
             UPDATE msgflux_messages SET state = $1, processed_at = $2
@@ -70,7 +70,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+    public async Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
     {
         const string sql = """
             UPDATE msgflux_messages SET state = $1, processed_at = $2
@@ -85,7 +85,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+    public async Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
     {
         const string sql = """
             UPDATE msgflux_messages SET state = $1, error_details = $2, retry_count = retry_count + 1
@@ -100,7 +100,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+    public async Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
     {
         const string sql = """
             UPDATE msgflux_messages SET state = $1, error_details = $2
@@ -159,7 +159,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
         {
             results.Add(new Message
             {
-                MessageId = reader.GetString(0),
+                MessageId = reader.GetFieldValue<Guid>(0),
                 ConsumerId = reader.GetString(1),
                 Payload = (byte[])reader[2],
                 Headers = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(3))

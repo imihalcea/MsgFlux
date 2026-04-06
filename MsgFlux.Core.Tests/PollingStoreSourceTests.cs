@@ -18,7 +18,7 @@ public class PollingStoreSourceTests
 
         await store.PersistAsync([new Message
         {
-            MessageId = "msg-1",
+            MessageId = Guid.Empty,
             ConsumerId = "consumer-1",
             Payload = [0x01],
             Headers = new Dictionary<string, string>(),
@@ -59,7 +59,7 @@ public class PollingStoreSourceTests
 
         await store.PersistAsync([new Message
         {
-            MessageId = "msg-1",
+            MessageId = Guid.Empty,
             ConsumerId = "consumer-1",
             Payload = [0x01],
             Headers = new Dictionary<string, string>(),
@@ -90,16 +90,16 @@ public class PollingStoreSourceTests
         public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
             => _inner.PersistAsync(messages, ct);
 
-        public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => throw new InvalidOperationException("DB connection lost");
 
-        public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
 
-        public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+        public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
 
-        public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+        public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
             => _inner.DeadLetterAsync(messageId, consumerId, reason, ct);
 
         public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(string? messageType = null, int maxCount = 100,
@@ -117,13 +117,13 @@ public class PollingStoreSourceTests
 
         public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
             => _inner.PersistAsync(messages, ct);
-        public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.MarkAsProcessingAsync(messageId, consumerId, ct);
-        public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
-        public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+        public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
-        public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+        public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
             => _inner.DeadLetterAsync(messageId, consumerId, reason, ct);
         public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(string? messageType = null, int maxCount = 100,
             TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)

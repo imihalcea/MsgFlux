@@ -28,7 +28,7 @@ public class SchemaInitializerTests
         // Verify table exists by inserting a row
         await using var cmd = dataSource.CreateCommand("""
             INSERT INTO msgflux_messages (message_id, consumer_id, payload, message_type, created_at)
-            VALUES ('test-id', 'consumer-a', E'\\x01', 'Test', now())
+            VALUES ('00000000-0000-0000-0000-000000000001', 'consumer-a', E'\\x01', 'Test', now())
             """);
         Assert.DoesNotThrowAsync(async () => await cmd.ExecuteNonQueryAsync());
     }

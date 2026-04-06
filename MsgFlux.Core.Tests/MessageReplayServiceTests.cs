@@ -21,7 +21,7 @@ public class MessageReplayServiceTests
         var payload = serializer.Serialize(new ReplayTestMessage { Data = "Replayed" });
         await store.PersistAsync(new[] { new Message
         {
-            MessageId = Guid.NewGuid().ToString(),
+            MessageId = Guid.NewGuid(),
             ConsumerId = consumerId,
             Payload = payload,
             Headers = new Dictionary<string, string>(),
@@ -75,7 +75,7 @@ public class MessageReplayServiceTests
             await hs.StartAsync(CancellationToken.None);
 
         var payload = serializer.Serialize(new ReplayTestMessage { Data = "RetryMe" });
-        var messageId = Guid.NewGuid().ToString();
+        var messageId = Guid.NewGuid();
         await store.PersistAsync(new[] { new Message
         {
             MessageId = messageId,

@@ -48,7 +48,7 @@ public sealed partial class Publisher(
             return;
         }
 
-        var messageId = Guid.NewGuid().ToString();
+        var messageId = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
 
         List<Message>? inMemoryRows = null;

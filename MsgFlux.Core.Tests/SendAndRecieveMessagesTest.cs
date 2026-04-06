@@ -6,9 +6,11 @@ namespace MsgFlux.Core.Tests;
 
 public class SendAndRecieveMessagesTest
 {
-    private static Message CreateMessage(string id = "m1") => new()
+    private static readonly Guid DefaultId = Guid.NewGuid();
+
+    private static Message CreateMessage(Guid? id = null) => new()
     {
-        MessageId = id,
+        MessageId = id ?? DefaultId,
         ConsumerId = "consumer-a",
         Payload = [0x01, 0x02, 0x03],
         Headers = new Dictionary<string, string> { ["key"] = "value" },
@@ -41,9 +43,9 @@ public class SendAndRecieveMessagesTest
         var options = new MsgFluxOptions().WithChannelCapacity(1);
         var source = new InMemoryMessageSource(options);
 
-        await source.PersistAsync(new[] { CreateMessage("1") }); // Fills the buffer
+        await source.PersistAsync(new[] { CreateMessage(Guid.NewGuid()) }); // Fills the buffer
 
-        var blockedTask = source.PersistAsync(new[] { CreateMessage("2") });
+        var blockedTask = source.PersistAsync(new[] { CreateMessage(Guid.NewGuid()) });
         await Task.WhenAny(blockedTask, Task.Delay(50));
         Assert.That(blockedTask.IsCompleted, Is.False, "Producer should be blocked when source is full");
 
@@ -76,6 +78,6 @@ public class SendAndRecieveMessagesTest
 
         // A late publish should fail — the bus is closed
         Assert.ThrowsAsync<ChannelClosedException>(
-            () => source.PersistAsync([CreateMessage("late")]));
+            () => source.PersistAsync([CreateMessage(Guid.NewGuid())]));
     }
 }

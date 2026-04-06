@@ -7,10 +7,10 @@ public interface IMessageStore
     /// </summary>
     Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default);
 
-    Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default);
-    Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default);
-    Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default);
-    Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default);
+    Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default);
+    Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default);
+    Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default);
+    Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default);
 
     /// <summary>
     /// Returns unprocessed rows (Pending or stuck Processing) across all consumers.

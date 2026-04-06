@@ -12,7 +12,7 @@ public partial class SchemaInitializer(
     private const string SchemaSql = """
         CREATE TABLE IF NOT EXISTS msgflux_messages (
             id            BIGSERIAL    PRIMARY KEY,
-            message_id    TEXT         NOT NULL,
+            message_id    UUID         NOT NULL,
             consumer_id   TEXT         NOT NULL,
             payload       BYTEA        NOT NULL,
             headers       JSONB        NOT NULL DEFAULT '{}',

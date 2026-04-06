@@ -9,7 +9,7 @@ namespace MsgFlux.Core.Tests;
 /// </summary>
 public class InMemoryMessageStore : IMessageStore
 {
-    public ConcurrentDictionary<(string MessageId, string ConsumerId), Message> Messages { get; } = new();
+    public ConcurrentDictionary<(Guid MessageId, string ConsumerId), Message> Messages { get; } = new();
 
     public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
     {
@@ -20,7 +20,7 @@ public class InMemoryMessageStore : IMessageStore
         return Task.CompletedTask;
     }
 
-    public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+    public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
     {
         var key = (messageId, consumerId);
         if (Messages.TryGetValue(key, out var msg))
@@ -30,7 +30,7 @@ public class InMemoryMessageStore : IMessageStore
         return Task.CompletedTask;
     }
 
-    public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+    public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
     {
         var key = (messageId, consumerId);
         if (Messages.TryGetValue(key, out var msg))
@@ -40,7 +40,7 @@ public class InMemoryMessageStore : IMessageStore
         return Task.CompletedTask;
     }
 
-    public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+    public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
     {
         var key = (messageId, consumerId);
         if (Messages.TryGetValue(key, out var msg))
@@ -55,7 +55,7 @@ public class InMemoryMessageStore : IMessageStore
         return Task.CompletedTask;
     }
 
-    public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+    public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
     {
         var key = (messageId, consumerId);
         if (Messages.TryGetValue(key, out var msg))
@@ -103,16 +103,16 @@ public class FailingMessageStore : IMessageStore
     public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
-    public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+    public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
-    public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+    public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
-    public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+    public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
-    public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+    public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
     public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(

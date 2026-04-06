@@ -46,7 +46,7 @@ public class EngineSourceFairnessTests
         {
             slowSource.Enqueue(new Message
             {
-                MessageId = Guid.NewGuid().ToString(),
+                MessageId = Guid.NewGuid(),
                 ConsumerId = slowConsumerId,
                 Payload = serializer.Serialize(new SlowMessage()),
                 Headers = new Dictionary<string, string>(),
@@ -66,7 +66,7 @@ public class EngineSourceFairnessTests
         var fastConsumerId = Registry.GetConsumerId(typeof(FastHandler));
         await inMemory.PersistAsync([new Message
         {
-            MessageId = Guid.NewGuid().ToString(),
+            MessageId = Guid.NewGuid(),
             ConsumerId = fastConsumerId,
             Payload = serializer.Serialize(new FastMessage()),
             Headers = new Dictionary<string, string>(),
@@ -153,7 +153,7 @@ public class EngineSourceFairnessTests
 
     private static Message MakeMessage(string tag, string consumerId, ISerializer serializer) => new()
     {
-        MessageId = Guid.NewGuid().ToString(),
+        MessageId = Guid.NewGuid(),
         ConsumerId = consumerId,
         Payload = serializer.Serialize(new TaggedMessage { Tag = tag }),
         Headers = new Dictionary<string, string>(),

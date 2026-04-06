@@ -80,7 +80,7 @@ public class DurableBufferTests
         private readonly InMemoryMessageStore _inner = new();
         private int _callCount;
 
-        public ConcurrentDictionary<(string, string), Message> Messages => _inner.Messages;
+        public ConcurrentDictionary<(Guid, string), Message> Messages => _inner.Messages;
 
         public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
         {
@@ -89,13 +89,13 @@ public class DurableBufferTests
             return _inner.PersistAsync(messages, ct);
         }
 
-        public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.MarkAsProcessingAsync(messageId, consumerId, ct);
-        public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
-        public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+        public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
-        public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+        public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
             => _inner.DeadLetterAsync(messageId, consumerId, reason, ct);
         public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(string? messageType = null, int maxCount = 100,
             TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
@@ -126,13 +126,13 @@ public class DurableBufferTests
     {
         public async Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
             => await Task.Delay(TimeSpan.FromSeconds(5), ct);
-        public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => Task.CompletedTask;
-        public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => Task.CompletedTask;
-        public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+        public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => Task.CompletedTask;
-        public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+        public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
             => Task.CompletedTask;
         public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(string? messageType = null, int maxCount = 100,
             TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
@@ -144,7 +144,7 @@ public class DurableBufferTests
     private static List<Message> MakeMessages(int count) =>
         Enumerable.Range(0, count).Select(i => new Message
         {
-            MessageId = Guid.NewGuid().ToString(),
+            MessageId = Guid.NewGuid(),
             ConsumerId = "test-consumer",
             Payload = [0x01],
             Headers = new Dictionary<string, string>(),

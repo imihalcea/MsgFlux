@@ -100,7 +100,7 @@ public class PollingStoreDeduplicationTests
                 {
                     await item.OnAck!(CancellationToken.None);
                     // Re-seed with same key — force back to Pending to simulate re-publish
-                    store.Messages[("msg-1", "consumer-1")] = SeedMessage();
+                    store.Messages[(Guid.Empty, "consumer-1")] = SeedMessage();
                 }
                 else
                 {
@@ -137,7 +137,7 @@ public class PollingStoreDeduplicationTests
                 {
                     await item.OnDeadLetter!("dead", CancellationToken.None);
                     // Re-seed with same key — force back to Pending
-                    store.Messages[("msg-1", "consumer-1")] = SeedMessage();
+                    store.Messages[(Guid.Empty, "consumer-1")] = SeedMessage();
                 }
                 else
                 {
@@ -192,13 +192,13 @@ public class PollingStoreDeduplicationTests
         private readonly InMemoryMessageStore _inner = new();
         public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
             => _inner.PersistAsync(messages, ct);
-        public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => throw new InvalidOperationException("DB connection lost");
-        public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+        public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
-        public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+        public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
             => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
-        public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+        public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
             => _inner.DeadLetterAsync(messageId, consumerId, reason, ct);
         public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(string? messageType = null, int maxCount = 100,
             TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
@@ -209,7 +209,7 @@ public class PollingStoreDeduplicationTests
 
     private static Message SeedMessage() => new()
     {
-        MessageId = "msg-1",
+        MessageId = Guid.Empty,
         ConsumerId = "consumer-1",
         Payload = [0x01],
         Headers = new Dictionary<string, string>(),
