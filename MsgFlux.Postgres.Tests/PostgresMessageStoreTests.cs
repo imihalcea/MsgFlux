@@ -13,7 +13,7 @@ public class PostgresMessageStoreTests
     public async Task SetUp()
     {
         _clock = new FakeClock();
-        _store = new PostgresMessageStore(PostgresFixture.DataSource, _clock);
+        _store = new PostgresMessageStore(PostgresFixture.DataSource, _clock, new PostgresOptions());
 
         await using var cmd = PostgresFixture.DataSource.CreateCommand("DELETE FROM msgflux_messages");
         await cmd.ExecuteNonQueryAsync();

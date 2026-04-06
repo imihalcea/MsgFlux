@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using MsgFlux.Abstractions;
 using Npgsql;
@@ -5,15 +6,57 @@ using NpgsqlTypes;
 
 namespace MsgFlux.Postgres;
 
-public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : IMessageStore
+public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, PostgresOptions options) : IMessageStore
 {
-    public async Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
+    public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
     {
-        if (messages.Count == 0) return;
+        if (messages.Count == 0) return Task.CompletedTask;
 
+        return messages.Count < options.BulkInsertThreshold
+            ? PersistSmallBatchAsync(messages, ct)
+            : PersistBulkAsync(messages, ct);
+    }
+
+    private async Task PersistSmallBatchAsync(IReadOnlyList<Message> messages, CancellationToken ct)
+    {
+        var sb = new StringBuilder(
+            "INSERT INTO msgflux_messages (message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at) VALUES ");
+
+        await using var cmd = dataSource.CreateCommand();
+        var p = 1;
+        for (var i = 0; i < messages.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append('(')
+              .Append('$').Append(p++).Append(", ")
+              .Append('$').Append(p++).Append(", ")
+              .Append('$').Append(p++).Append(", ")
+              .Append('$').Append(p++).Append("::jsonb, ")
+              .Append('$').Append(p++).Append(", ")
+              .Append('$').Append(p++).Append(", ")
+              .Append('$').Append(p++).Append(", ")
+              .Append('$').Append(p++).Append(')');
+
+            var m = messages[i];
+            cmd.Parameters.AddWithValue(m.MessageId);
+            cmd.Parameters.AddWithValue(m.ConsumerId);
+            cmd.Parameters.AddWithValue(m.Payload);
+            cmd.Parameters.AddWithValue(JsonSerializer.Serialize(m.Headers));
+            cmd.Parameters.AddWithValue(m.MessageType);
+            cmd.Parameters.AddWithValue((short)m.State);
+            cmd.Parameters.AddWithValue(m.RetryCount);
+            cmd.Parameters.AddWithValue(m.CreatedAt);
+        }
+        sb.Append(" ON CONFLICT (message_id, consumer_id) DO NOTHING");
+
+        cmd.CommandText = sb.ToString();
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task PersistBulkAsync(IReadOnlyList<Message> messages, CancellationToken ct)
+    {
         await using var conn = await dataSource.OpenConnectionAsync(ct);
 
-        // Create a temp table, COPY into it, then INSERT ... ON CONFLICT to handle duplicates.
         await using var createTemp = new NpgsqlCommand("""
             CREATE TEMP TABLE IF NOT EXISTS _msgflux_bulk (
                 message_id UUID, consumer_id TEXT, payload BYTEA,
