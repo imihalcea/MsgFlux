@@ -275,17 +275,34 @@ Benchmarks measured end-to-end: publish + store persistence + polling + dispatch
 
 Environment: .NET 10, PostgreSQL 17 (Testcontainers), Ubuntu 25.10, Intel Core Ultra 9 275HX (24 cores), 64 GB RAM.
 
+Default concurrency (`MaxDegreeOfParallelism` = ProcessorCount = 24):
+
 | Mode | 100 msg | 1K msg | 5K msg |
 |------|---------|--------|--------|
-| AtMostOnce | ~100K msg/s | ~108K msg/s | ~180K msg/s |
-| AtLeastOnce | ~1.7K msg/s | ~14K msg/s | ~18K msg/s |
-| Mixed | ~1.7K msg/s | ~11K msg/s | ~13K msg/s |
+| AtMostOnce | ~112K msg/s | ~87K msg/s | ~181K msg/s |
+| AtLeastOnce | ~1.7K msg/s | ~15K msg/s | ~17K msg/s |
+| Mixed | ~1.5K msg/s | ~11K msg/s | ~14K msg/s |
 
-**AtMostOnce** is bounded by channel throughput and serialization — scales linearly.
+Impact of `MaxDegreeOfParallelism` on AtLeastOnce throughput (5K messages):
 
-**AtLeastOnce** throughput improves with batch size thanks to batched claims and acks (single SQL round-trip per batch). The 100-message result is dominated by polling latency (~1s ReplayInterval), not throughput.
+| DOP | 100 msg | 1K msg | 5K msg |
+|-----|---------|--------|--------|
+| 1 | 1.7K | 14K | 16K |
+| 2 | 1.7K | 15K | 16K |
+| 4 | 1.6K | 12K | 15K |
+| 24 | 1.7K | 15K | 17K |
 
-**Mixed** mode is bounded by the durable path since AtMostOnce consumers add negligible overhead.
+### Interpretation
+
+**AtMostOnce** throughput scales with batch size (5K is ~60% faster than 1K) because the fixed cost of channel setup and DI scoping is amortized over more messages. At ~180K msg/s, the bottleneck is JSON serialization + Brotli compression.
+
+**AtLeastOnce at 100 messages** is consistently ~1.7K msg/s regardless of DOP. This is not a throughput limit — it is polling latency. Messages wait up to `ReplayInterval` (1s) to be picked up after the first empty poll. The actual processing is fast; the wait is structural.
+
+**AtLeastOnce at 1K-5K messages** reaches 14K-17K msg/s. At this volume, the publish phase overlaps with the poll cycle, so messages are picked up while they are still being published. Batched claims and acks (one SQL round-trip per batch instead of per message) account for most of the throughput gain.
+
+**DOP has surprisingly little impact on durable throughput.** Even DOP=1 achieves 16K msg/s on 5K messages. The bottleneck is PostgreSQL I/O (fetch + batch claim + batch ack = 3 round-trips per poll cycle), not consumer parallelism. The benchmark consumers are near-instant (`Task.CompletedTask`); real-world consumers with I/O-bound work would benefit more from higher DOP.
+
+**Mixed mode** is bounded by the durable path. AtMostOnce consumers complete almost instantly and do not contend with durable dispatch.
 
 ### Design trade-offs
 
