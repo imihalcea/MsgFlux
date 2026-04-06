@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -21,6 +22,7 @@ public partial class EngineService : BackgroundService
     private readonly IMessageSource[] _sources;
     private readonly Dictionary<string, Type> _messageTypesByName;
     private readonly SemaphoreSlim _globalThrottle;
+    private readonly ConcurrentDictionary<Task, byte> _inFlightTasks = new();
 
     public EngineService(
         IServiceProvider serviceProvider,
@@ -61,6 +63,7 @@ public partial class EngineService : BackgroundService
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
+        await Task.WhenAll(_inFlightTasks.Keys);
         foreach (var source in _sources)
             source.Complete();
     }
@@ -86,7 +89,9 @@ public partial class EngineService : BackgroundService
                 await foreach (var item in source.StreamAsync(ct))
                 {
                     await _globalThrottle.WaitAsync(ct);
-                    _ = DispatchWithThrottleAsync(item, ct);
+                    var task = DispatchWithThrottleAsync(item, ct);
+                    _inFlightTasks.TryAdd(task, 0);
+                    _ = task.ContinueWith(t => _inFlightTasks.TryRemove(t, out _), TaskContinuationOptions.ExecuteSynchronously);
                 }
             }
             catch (OperationCanceledException) { break; }
