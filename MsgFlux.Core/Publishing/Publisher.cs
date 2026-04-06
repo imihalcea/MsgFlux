@@ -37,7 +37,8 @@ public sealed partial class Publisher(
 
         if (payloadBytes.Length > options.MaxPayloadSizeKb * 1024)
         {
-            LogPayloadTooLarge(logger, payloadBytes.Length, messageType.Name, options.MaxPayloadSizeKb);
+            throw new InvalidOperationException(
+                $"Payload size {payloadBytes.Length} bytes for message {messageType.Name} exceeds the configured limit of {options.MaxPayloadSizeKb}KB.");
         }
 
         var consumers = registry.GetConsumers(messageType);
@@ -83,9 +84,6 @@ public sealed partial class Publisher(
             await inMemory.PersistAsync(inMemoryRows, ct);
         }
     }
-
-    [LoggerMessage(LogLevel.Warning, "Payload size {PayloadSize} for message {MessageType} exceeds {MaxPayloadSize}KB")]
-    static partial void LogPayloadTooLarge(ILogger logger, int payloadSize, string messageType, int maxPayloadSize);
 
     [LoggerMessage(LogLevel.Warning, "No consumer registered for {MessageType}; message dropped")]
     static partial void LogNoConsumers(ILogger logger, string messageType);

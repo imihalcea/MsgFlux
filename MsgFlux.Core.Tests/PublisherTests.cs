@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Abstractions;
 using MsgFlux.Core.Serialization;
@@ -45,14 +44,14 @@ public class PublisherTests
     }
 
     [Test]
-    public async Task PublishAsync_Should_Log_Warning_When_Payload_Exceeds_Configured_Limit()
+    public void PublishAsync_Should_Throw_When_Payload_Exceeds_Configured_Limit()
     {
         var options = new MsgFluxOptions().WithMaxPayloadSizeKb(1);
         var registry = new Registry();
         registry.Register<TestEvent, TestConsumer>(Semantics.AtMostOnce);
         var inMemory = new InMemoryMessageSource(options);
         var serializer = new JsonSerializer();
-        var logger = new TestLogger<Publisher>();
+        var logger = NullLogger<Publisher>.Instance;
         var durableBuffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance);
         var publisher = new Publisher(inMemory, registry, serializer, options, logger, durableBuffer);
 
@@ -60,11 +59,9 @@ public class PublisherTests
         new Random().NextBytes(bytes);
         var largeContent = Convert.ToBase64String(bytes);
 
-        await publisher.PublishAsync(new TestEvent { Content = largeContent });
-
-        var warning = logger.LogEntries.FirstOrDefault(e => e.LogLevel == LogLevel.Warning);
-        Assert.That(warning, Is.Not.Null);
-        Assert.That(warning!.Message, Does.Contain("exceeds 1KB"));
+        var ex = Assert.ThrowsAsync<InvalidOperationException>(
+            () => publisher.PublishAsync(new TestEvent { Content = largeContent }));
+        Assert.That(ex!.Message, Does.Contain("exceeds the configured limit of 1KB"));
     }
 
     public class TestEvent
@@ -75,15 +72,5 @@ public class PublisherTests
     public class TestConsumer : IConsume<TestEvent>
     {
         public Task HandleAsync(TestEvent @event, CancellationToken ct) => Task.CompletedTask;
-    }
-
-    private class TestLogger<T> : ILogger<T>
-    {
-        public List<LogEntry> LogEntries { get; } = new();
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            => LogEntries.Add(new LogEntry(logLevel, formatter(state, exception)));
-        public record LogEntry(LogLevel LogLevel, string Message);
     }
 }
