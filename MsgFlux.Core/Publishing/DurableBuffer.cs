@@ -17,8 +17,10 @@ public sealed partial class DurableBuffer(
     private Task? _flushLoop;
     private readonly CancellationTokenSource _cts = new();
 
-    public Task AddAsync(IReadOnlyList<Message> messages)
+    public Task AddAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
+
         bool shouldFlush;
         lock (_lock)
         {
@@ -27,10 +29,10 @@ public sealed partial class DurableBuffer(
             _flushLoop ??= FlushLoopAsync(_cts.Token);
         }
 
-        return shouldFlush ? TryFlushAsync() : Task.CompletedTask;
+        return shouldFlush ? TryFlushAsync(ct) : Task.CompletedTask;
     }
 
-    internal async Task FlushAsync()
+    internal async Task FlushAsync(CancellationToken ct = default)
     {
         List<Message> batch;
         lock (_lock)
@@ -42,7 +44,7 @@ public sealed partial class DurableBuffer(
 
         try
         {
-            await store!.PersistAsync(batch, CancellationToken.None);
+            await store!.PersistAsync(batch, ct);
         }
         catch
         {
@@ -56,9 +58,10 @@ public sealed partial class DurableBuffer(
         }
     }
 
-    private async Task TryFlushAsync()
+    private async Task TryFlushAsync(CancellationToken ct = default)
     {
-        try { await FlushAsync(); }
+        try { await FlushAsync(ct); }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex) { LogFlushError(logger, ex); }
     }
 

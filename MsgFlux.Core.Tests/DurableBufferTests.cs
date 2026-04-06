@@ -104,6 +104,43 @@ public class DurableBufferTests
             => _inner.PurgeCompletedAsync(olderThan, ct);
     }
 
+    [Test]
+    public void AddAsync_Should_Honor_CancellationToken()
+    {
+        var store = new SlowPersistStore();
+        var options = new MsgFluxOptions().WithBufferedPublishing(
+            flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 1);
+        using var cts = new CancellationTokenSource();
+
+        var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
+
+        // Cancel immediately
+        cts.Cancel();
+
+        // AddAsync should throw OperationCanceledException since the token is already cancelled
+        Assert.ThrowsAsync<OperationCanceledException>(
+            () => buffer.AddAsync(MakeMessages(1), cts.Token));
+    }
+
+    private class SlowPersistStore : IMessageStore
+    {
+        public async Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
+            => await Task.Delay(TimeSpan.FromSeconds(5), ct);
+        public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(string? messageType = null, int maxCount = 100,
+            TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<Message>>([]);
+        public Task<int> PurgeCompletedAsync(TimeSpan olderThan, CancellationToken ct = default)
+            => Task.FromResult(0);
+    }
+
     private static List<Message> MakeMessages(int count) =>
         Enumerable.Range(0, count).Select(i => new Message
         {

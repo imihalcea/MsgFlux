@@ -76,7 +76,7 @@ public sealed partial class Publisher(
         // and can retry; no partial delivery on the AtMostOnce side).
         if (durableRows is { Count: > 0 })
         {
-            await durableBuffer.AddAsync(durableRows);
+            await durableBuffer.AddAsync(durableRows, ct);
         }
 
         if (inMemoryRows is { Count: > 0 })
