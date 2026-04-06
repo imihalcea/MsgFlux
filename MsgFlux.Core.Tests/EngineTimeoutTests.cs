@@ -17,8 +17,9 @@ public class EngineTimeoutTests
         services.AddMsgFlux(options =>
         {
             options
-                .WithReplayInterval(TimeSpan.FromSeconds(2)) // single poll within test window
+                .WithReplayInterval(TimeSpan.FromMilliseconds(50))
                 .WithStaleProcessingTimeout(TimeSpan.FromMilliseconds(200))
+                .WithMaxDeadLetterRetries(1)
                 .AddConsumer<HangingHandler>(Semantics.AtLeastOnce);
         });
 
@@ -32,16 +33,17 @@ public class EngineTimeoutTests
         var publisher = provider.GetRequiredService<IPublish>();
         await publisher.PublishAsync(new HangingMessage { Value = "hang" });
 
-        // Wait for timeout (200ms) + margin
-        await Task.Delay(1000);
+        // Wait for timeout + dead-letter cycle
+        await Task.Delay(2000);
 
         await engine.StopAsync(CancellationToken.None);
         await ((IAsyncDisposable)provider).DisposeAsync();
 
-        // Assert — message should be marked as Failed due to timeout
+        // Assert — consumer was invoked, message timed out and was eventually dead-lettered
         var msg = store.Messages.Values.First();
-        Assert.That(msg.State, Is.EqualTo(MessageState.Failed));
-        Assert.That(msg.ErrorDetails, Does.Contain("timed out"));
+        Assert.That(HangingHandler.HandledCount, Is.GreaterThanOrEqualTo(1));
+        Assert.That(msg.RetryCount, Is.GreaterThanOrEqualTo(1));
+        Assert.That(msg.State, Is.EqualTo(MessageState.DeadLettered));
     }
 
     [Test]

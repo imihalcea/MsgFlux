@@ -16,7 +16,8 @@ public sealed partial class Publisher(
     ISerializer serializer,
     MsgFluxOptions options,
     ILogger<Publisher> logger,
-    IMessageStore? durableStore = null) : IPublish
+    IMessageStore? durableStore = null,
+    DurableBuffer? durableBuffer = null) : IPublish
 {
     private static readonly ActivitySource ActivitySource = new("MsgFlux");
 
@@ -77,7 +78,11 @@ public sealed partial class Publisher(
         {
             if (durableStore is null)
                 throw new InvalidOperationException("Durable consumers declared but no IMessageStore registered.");
-            await durableStore.PersistAsync(durableRows, ct);
+
+            if (durableBuffer is not null)
+                await durableBuffer.AddAsync(durableRows);
+            else
+                await durableStore.PersistAsync(durableRows, ct);
         }
 
         if (inMemoryRows is { Count: > 0 })

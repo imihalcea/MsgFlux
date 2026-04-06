@@ -14,6 +14,9 @@ public class MsgFluxOptions
     public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromHours(1);
     public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(5);
     public int PollingBatchSize { get; set; } = 500;
+    public TimeSpan BufferFlushInterval { get; set; } = TimeSpan.Zero;
+    public int BufferFlushThreshold { get; set; }
+    internal bool IsBufferedPublishing => BufferFlushThreshold > 0 || BufferFlushInterval > TimeSpan.Zero;
 
     internal List<Action<IServiceCollection, Registry>> ConsumerRegistrations { get; } = new();
 
@@ -23,7 +26,14 @@ public class MsgFluxOptions
     public MsgFluxOptions WithStaleProcessingTimeout(TimeSpan t) { StaleProcessingTimeout = t; return this; }
     public MsgFluxOptions WithPurge(TimeSpan olderThan, TimeSpan interval) { PurgeOlderThan = olderThan; PurgeInterval = interval; return this; }
     public MsgFluxOptions WithReplayInterval(TimeSpan interval) { ReplayInterval = interval; return this; }
+    public MsgFluxOptions WithMaxDeadLetterRetries(int retries) { MaxDeadLetterRetries = retries; return this; }
     public MsgFluxOptions WithPollingBatchSize(int batchSize) { PollingBatchSize = batchSize; return this; }
+    public MsgFluxOptions WithBufferedPublishing(TimeSpan flushInterval, int flushThreshold = 50)
+    {
+        BufferFlushInterval = flushInterval;
+        BufferFlushThreshold = flushThreshold;
+        return this;
+    }
 
     /// <summary>
     /// Registers a consumer with an explicit delivery semantic. AtMostOnce (default) uses the

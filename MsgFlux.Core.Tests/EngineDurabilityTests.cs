@@ -49,8 +49,8 @@ public class EngineDurabilityTests
         services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(options =>
         {
-            // Single-shot polling window for determinism: one dispatch → one Failed state → test stops.
-            options.WithReplayInterval(TimeSpan.FromSeconds(5));
+            options.WithReplayInterval(TimeSpan.FromMilliseconds(50));
+            options.WithMaxDeadLetterRetries(1);
             options.AddConsumer<FailingHandler>(Semantics.AtLeastOnce);
         });
 
@@ -64,12 +64,14 @@ public class EngineDurabilityTests
         var publisher = provider.GetRequiredService<IPublish>();
         await publisher.PublishAsync(new AckTestMessage { Value = "will-fail" });
 
-        await Task.Delay(2000); // Wait for Polly retries (3×) + OnFail
+        await Task.Delay(3000);
         await hostedService.StopAsync(CancellationToken.None);
 
-        // Assert
+        // Assert — consumer was called, message went through failure path then dead-lettered
         var msg = store.Messages.Values.First();
-        Assert.That(msg.State, Is.EqualTo(MessageState.Failed));
+        Assert.That(FailingHandler.CallCount, Is.GreaterThanOrEqualTo(1));
+        Assert.That(msg.RetryCount, Is.GreaterThanOrEqualTo(1));
+        Assert.That(msg.State, Is.EqualTo(MessageState.DeadLettered));
     }
 
     public class AckTestMessage
