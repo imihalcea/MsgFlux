@@ -15,9 +15,10 @@ public class ResilienceTests
         services.AddLogging();
         services.AddMsgFlux(options =>
         {
+            options.WithRetry(2, TimeSpan.FromMilliseconds(10));
             options.AddConsumer<RetryConsumer>();
         });
-        
+
         RetryConsumer.Reset();
 
         var provider = services.BuildServiceProvider();
@@ -28,13 +29,11 @@ public class ResilienceTests
 
         // Act
         await publisher.PublishAsync(new RetryMessage { Content = "Retry Me" });
-        
-        // Wait enough time for retries (3 retries * ~200ms backoff + processing time)
-        await Task.Delay(2000);
 
-        // Assert
-        // Should be called 1 (initial) + 3 (retries) = 4 times
-        Assert.That(RetryConsumer.CallCount, Is.EqualTo(4));
+        await Task.Delay(500);
+
+        // Assert — 1 (initial) + 2 (retries) = 3 calls
+        Assert.That(RetryConsumer.CallCount, Is.EqualTo(3));
 
         await hostedService.StopAsync(CancellationToken.None);
     }

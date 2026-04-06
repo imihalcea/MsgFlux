@@ -17,6 +17,7 @@ public class EngineDurabilityTests
         services.AddMsgFlux(options =>
         {
             options.WithReplayInterval(TimeSpan.FromMilliseconds(50));
+            options.WithRetry(1, TimeSpan.FromMilliseconds(10));
             options.AddConsumer<SuccessHandler>(Semantics.AtLeastOnce);
         });
 
@@ -30,7 +31,7 @@ public class EngineDurabilityTests
         var publisher = provider.GetRequiredService<IPublish>();
         await publisher.PublishAsync(new AckTestMessage { Value = "test" });
 
-        await Task.Delay(500);
+        await Task.Delay(200);
 
         // Assert
         var msg = store.Messages.Values.First();
@@ -50,6 +51,7 @@ public class EngineDurabilityTests
         services.AddMsgFlux(options =>
         {
             options.WithReplayInterval(TimeSpan.FromMilliseconds(50));
+            options.WithRetry(1, TimeSpan.FromMilliseconds(10));
             options.WithMaxDeadLetterRetries(1);
             options.AddConsumer<FailingHandler>(Semantics.AtLeastOnce);
         });
@@ -64,7 +66,7 @@ public class EngineDurabilityTests
         var publisher = provider.GetRequiredService<IPublish>();
         await publisher.PublishAsync(new AckTestMessage { Value = "will-fail" });
 
-        await Task.Delay(3000);
+        await Task.Delay(500);
         await hostedService.StopAsync(CancellationToken.None);
 
         // Assert — consumer was called, message went through failure path then dead-lettered

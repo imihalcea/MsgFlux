@@ -16,6 +16,8 @@ public class MsgFluxOptions
     public int PollingBatchSize { get; set; } = 500;
     public TimeSpan BufferFlushInterval { get; set; } = TimeSpan.Zero;
     public int BufferFlushThreshold { get; set; } = 1;
+    public int MaxRetryAttempts { get; set; } = 3;
+    public TimeSpan RetryDelay { get; set; } = TimeSpan.FromMilliseconds(200);
 
     internal List<Action<IServiceCollection, Registry>> ConsumerRegistrations { get; } = new();
 
@@ -27,6 +29,7 @@ public class MsgFluxOptions
     public MsgFluxOptions WithReplayInterval(TimeSpan interval) { ReplayInterval = interval; return this; }
     public MsgFluxOptions WithMaxDeadLetterRetries(int retries) { MaxDeadLetterRetries = retries; return this; }
     public MsgFluxOptions WithPollingBatchSize(int batchSize) { PollingBatchSize = batchSize; return this; }
+    public MsgFluxOptions WithRetry(int maxAttempts, TimeSpan delay) { MaxRetryAttempts = maxAttempts; RetryDelay = delay; return this; }
     public MsgFluxOptions WithBufferedPublishing(TimeSpan flushInterval, int flushThreshold = 50)
     {
         BufferFlushInterval = flushInterval;

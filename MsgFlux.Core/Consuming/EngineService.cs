@@ -20,6 +20,7 @@ public partial class EngineService : BackgroundService
     private readonly MsgFluxOptions _options;
     private readonly IMessageSource[] _sources;
     private readonly Dictionary<string, Type> _messageTypesByName;
+    private readonly SemaphoreSlim _globalThrottle;
 
     public EngineService(
         IServiceProvider serviceProvider,
@@ -37,11 +38,16 @@ public partial class EngineService : BackgroundService
         _sources = sources.ToArray();
         _messageTypesByName = registry.GetMessageTypes().ToDictionary(t => t.Name, t => t);
 
+        var maxConcurrency = options.MaxDegreeOfParallelism > 0
+            ? options.MaxDegreeOfParallelism
+            : Environment.ProcessorCount;
+        _globalThrottle = new SemaphoreSlim(maxConcurrency);
+
         _pipeline = new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
             {
-                MaxRetryAttempts = 3,
-                Delay = TimeSpan.FromMilliseconds(200),
+                MaxRetryAttempts = options.MaxRetryAttempts,
+                Delay = options.RetryDelay,
                 BackoffType = DelayBackoffType.Exponential,
                 OnRetry = args =>
                 {
@@ -72,6 +78,7 @@ public partial class EngineService : BackgroundService
         {
             await Parallel.ForEachAsync(source.StreamAsync(ct), parallelOptions, async (item, token) =>
             {
+                await _globalThrottle.WaitAsync(token);
                 try
                 {
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -85,6 +92,10 @@ public partial class EngineService : BackgroundService
                 catch (Exception ex)
                 {
                     LogProcessingError(_logger, item.Message.MessageType, ex);
+                }
+                finally
+                {
+                    _globalThrottle.Release();
                 }
             });
         }

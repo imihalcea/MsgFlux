@@ -17,13 +17,13 @@ public class DurablePublisherTests
         services.AddMsgFlux(options =>
         {
             options.WithReplayInterval(TimeSpan.FromMilliseconds(50));
+            options.WithRetry(1, TimeSpan.FromMilliseconds(10));
             options.AddConsumer<DurableTestHandler>(Semantics.AtLeastOnce);
         });
 
         DurableTestHandler.Reset();
         var provider = services.BuildServiceProvider();
 
-        // Start only Engine (no ReplayService — nothing to replay, and it would race with publish)
         var engine = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await engine.StartAsync(CancellationToken.None);
 
@@ -31,7 +31,7 @@ public class DurablePublisherTests
         var publisher = provider.GetRequiredService<IPublish>();
         await publisher.PublishAsync(new DurableTestMessage { Content = "Hello Durable" });
 
-        await Task.Delay(500);
+        await Task.Delay(200);
 
         // Assert
         Assert.That(store.Messages.Count, Is.EqualTo(1));
@@ -52,6 +52,7 @@ public class DurablePublisherTests
         services.AddMsgFlux(options =>
         {
             options.WithReplayInterval(TimeSpan.FromMilliseconds(50));
+            options.WithRetry(1, TimeSpan.FromMilliseconds(10));
             options.AddConsumer<DurableTestHandler>(Semantics.AtLeastOnce);
         });
 
@@ -66,7 +67,7 @@ public class DurablePublisherTests
         Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await publisher.PublishAsync(new DurableTestMessage { Content = "Should fail" }));
 
-        await Task.Delay(200);
+        await Task.Delay(100);
         Assert.That(DurableTestHandler.HandledCount, Is.EqualTo(0));
 
         await hostedService.StopAsync(CancellationToken.None);

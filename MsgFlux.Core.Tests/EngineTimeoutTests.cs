@@ -18,7 +18,8 @@ public class EngineTimeoutTests
         {
             options
                 .WithReplayInterval(TimeSpan.FromMilliseconds(50))
-                .WithStaleProcessingTimeout(TimeSpan.FromMilliseconds(200))
+                .WithStaleProcessingTimeout(TimeSpan.FromMilliseconds(100))
+                .WithRetry(1, TimeSpan.FromMilliseconds(10))
                 .WithMaxDeadLetterRetries(1)
                 .AddConsumer<HangingHandler>(Semantics.AtLeastOnce);
         });
@@ -33,8 +34,7 @@ public class EngineTimeoutTests
         var publisher = provider.GetRequiredService<IPublish>();
         await publisher.PublishAsync(new HangingMessage { Value = "hang" });
 
-        // Wait for timeout + dead-letter cycle
-        await Task.Delay(2000);
+        await Task.Delay(500);
 
         await engine.StopAsync(CancellationToken.None);
         await ((IAsyncDisposable)provider).DisposeAsync();
@@ -58,6 +58,7 @@ public class EngineTimeoutTests
         {
             options
                 .WithReplayInterval(TimeSpan.FromMilliseconds(50))
+                .WithRetry(1, TimeSpan.FromMilliseconds(10))
                 .WithStaleProcessingTimeout(TimeSpan.FromSeconds(5))
                 .AddConsumer<FastHandler>(Semantics.AtLeastOnce);
         });
@@ -72,7 +73,7 @@ public class EngineTimeoutTests
         var publisher = provider.GetRequiredService<IPublish>();
         await publisher.PublishAsync(new HangingMessage { Value = "fast" });
 
-        await Task.Delay(500);
+        await Task.Delay(200);
 
         // Assert — message should be Completed, not timed out
         var msg = store.Messages.Values.First();
@@ -91,7 +92,8 @@ public class EngineTimeoutTests
         services.AddMsgFlux(options =>
         {
             options
-                .WithStaleProcessingTimeout(TimeSpan.FromMilliseconds(200))
+                .WithStaleProcessingTimeout(TimeSpan.FromMilliseconds(100))
+                .WithRetry(1, TimeSpan.FromMilliseconds(10))
                 .AddConsumer<HangingHandler>();
         });
 
@@ -105,8 +107,7 @@ public class EngineTimeoutTests
         var publisher = provider.GetRequiredService<IPublish>();
         await publisher.PublishAsync(new HangingMessage { Value = "hang-inmemory" });
 
-        // Wait for timeout + margin
-        await Task.Delay(1000);
+        await Task.Delay(500);
 
         // Assert — HangingHandler was invoked (proves message was dispatched)
         Assert.That(HangingHandler.HandledCount, Is.EqualTo(1));

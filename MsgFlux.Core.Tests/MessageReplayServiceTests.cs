@@ -35,6 +35,7 @@ public class MessageReplayServiceTests
         services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(opt => opt
             .WithReplayInterval(TimeSpan.FromMilliseconds(50))
+            .WithRetry(1, TimeSpan.FromMilliseconds(10))
             .AddConsumer<ReplayTestHandler>(Semantics.AtLeastOnce));
 
         ReplayTestHandler.Reset();
@@ -43,7 +44,7 @@ public class MessageReplayServiceTests
         foreach (var hs in provider.GetServices<IHostedService>())
             await hs.StartAsync(CancellationToken.None);
 
-        await Task.Delay(500);
+        await Task.Delay(200);
 
         Assert.That(ReplayTestHandler.HandledCount, Is.GreaterThanOrEqualTo(1));
         Assert.That(ReplayTestHandler.LastData, Is.EqualTo("Replayed"));
@@ -64,6 +65,7 @@ public class MessageReplayServiceTests
         services.AddSingleton<IMessageStore>(store);
         services.AddMsgFlux(opt => opt
             .WithReplayInterval(TimeSpan.FromMilliseconds(50))
+            .WithRetry(1, TimeSpan.FromMilliseconds(10))
             .AddConsumer<ReplayTestHandler>(Semantics.AtLeastOnce));
 
         ReplayTestHandler.Reset();
@@ -86,7 +88,7 @@ public class MessageReplayServiceTests
         }});
         await store.MarkAsFailedAsync(messageId, consumerId, "simulated failure");
 
-        await Task.Delay(500);
+        await Task.Delay(200);
 
         Assert.That(ReplayTestHandler.HandledCount, Is.GreaterThanOrEqualTo(1));
         Assert.That(ReplayTestHandler.LastData, Is.EqualTo("RetryMe"));
