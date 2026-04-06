@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Abstractions;
 
@@ -50,6 +51,57 @@ public class DurableBufferTests
 
         await buffer.DisposeAsync();
         Assert.That(store.Messages, Has.Count.EqualTo(5));
+    }
+
+    [Test]
+    public async Task Should_Restore_Buffer_When_Flush_Fails()
+    {
+        // Arrange — store that fails on first PersistAsync, then succeeds
+        var store = new FailOncePersistStore();
+        var options = new MsgFluxOptions().WithBufferedPublishing(
+            flushInterval: TimeSpan.FromMilliseconds(50), flushThreshold: 3);
+        await using var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
+
+        // Act — add 3 messages, triggering a threshold flush that will fail
+        await buffer.AddAsync(MakeMessages(3));
+
+        // Assert — store has nothing (persist failed), but messages should NOT be lost
+        Assert.That(store.Messages, Has.Count.EqualTo(0));
+
+        // Act — wait for the timer flush (store succeeds this time)
+        await Task.Delay(200);
+
+        // Assert — all 3 messages recovered and persisted on retry
+        Assert.That(store.Messages, Has.Count.EqualTo(3));
+    }
+
+    private class FailOncePersistStore : IMessageStore
+    {
+        private readonly InMemoryMessageStore _inner = new();
+        private int _callCount;
+
+        public ConcurrentDictionary<(string, string), Message> Messages => _inner.Messages;
+
+        public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
+        {
+            if (Interlocked.Increment(ref _callCount) == 1)
+                throw new InvalidOperationException("DB unavailable");
+            return _inner.PersistAsync(messages, ct);
+        }
+
+        public Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)
+            => _inner.MarkAsProcessingAsync(messageId, consumerId, ct);
+        public Task AcknowledgeAsync(string messageId, string consumerId, CancellationToken ct = default)
+            => _inner.AcknowledgeAsync(messageId, consumerId, ct);
+        public Task MarkAsFailedAsync(string messageId, string consumerId, string errorDetails, CancellationToken ct = default)
+            => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
+        public Task DeadLetterAsync(string messageId, string consumerId, string reason, CancellationToken ct = default)
+            => _inner.DeadLetterAsync(messageId, consumerId, reason, ct);
+        public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(string? messageType = null, int maxCount = 100,
+            TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
+            => _inner.FetchUnprocessedAsync(messageType, maxCount, staleProcessingTimeout, ct);
+        public Task<int> PurgeCompletedAsync(TimeSpan olderThan, CancellationToken ct = default)
+            => _inner.PurgeCompletedAsync(olderThan, ct);
     }
 
     private static List<Message> MakeMessages(int count) =>

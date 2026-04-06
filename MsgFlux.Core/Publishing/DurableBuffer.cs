@@ -27,7 +27,7 @@ public sealed partial class DurableBuffer(
             _flushLoop ??= FlushLoopAsync(_cts.Token);
         }
 
-        return shouldFlush ? FlushAsync() : Task.CompletedTask;
+        return shouldFlush ? TryFlushAsync() : Task.CompletedTask;
     }
 
     internal async Task FlushAsync()
@@ -40,7 +40,26 @@ public sealed partial class DurableBuffer(
             _buffer = [];
         }
 
-        await store!.PersistAsync(batch, CancellationToken.None);
+        try
+        {
+            await store!.PersistAsync(batch, CancellationToken.None);
+        }
+        catch
+        {
+            // Restore the batch so messages are not lost; next flush will retry.
+            lock (_lock)
+            {
+                batch.AddRange(_buffer);
+                _buffer = batch;
+            }
+            throw;
+        }
+    }
+
+    private async Task TryFlushAsync()
+    {
+        try { await FlushAsync(); }
+        catch (Exception ex) { LogFlushError(logger, ex); }
     }
 
     private async Task FlushLoopAsync(CancellationToken ct)
@@ -51,13 +70,10 @@ public sealed partial class DurableBuffer(
 
         while (!ct.IsCancellationRequested)
         {
-            try
-            {
-                await Task.Delay(interval, ct);
-                await FlushAsync();
-            }
+            try { await Task.Delay(interval, ct); }
             catch (OperationCanceledException) { break; }
-            catch (Exception ex) { LogFlushError(logger, ex); }
+
+            await TryFlushAsync();
         }
     }
 

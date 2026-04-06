@@ -42,9 +42,9 @@ public class DurablePublisherTests
     }
 
     [Test]
-    public async Task DurablePublisher_Should_Not_Enqueue_When_Store_Fails()
+    public async Task DurablePublisher_Should_Buffer_When_Store_Fails()
     {
-        // Arrange
+        // Arrange — store that always fails
         var store = new FailingMessageStore();
         var services = new ServiceCollection();
         services.AddLogging();
@@ -62,12 +62,13 @@ public class DurablePublisherTests
         var hostedService = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await hostedService.StartAsync(CancellationToken.None);
 
-        // Act & Assert
+        // Act — publish does not throw; the buffer absorbs the store failure
         var publisher = provider.GetRequiredService<IPublish>();
-        Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await publisher.PublishAsync(new DurableTestMessage { Content = "Should fail" }));
+        await publisher.PublishAsync(new DurableTestMessage { Content = "Buffered" });
 
         await Task.Delay(100);
+
+        // Assert — handler never called (messages stuck in buffer, never persisted)
         Assert.That(DurableTestHandler.HandledCount, Is.EqualTo(0));
 
         await hostedService.StopAsync(CancellationToken.None);
