@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using MsgFlux.Abstractions;
@@ -15,6 +16,8 @@ public sealed partial class PollingStoreSource(
     MsgFluxOptions options,
     ILogger<PollingStoreSource> logger) : IMessageSource
 {
+    private readonly ConcurrentDictionary<(string MessageId, string ConsumerId), byte> _inFlight = new();
+
     public async IAsyncEnumerable<DispatchItem> StreamAsync([EnumeratorCancellation] CancellationToken ct)
     {
         var pollInterval = options.ReplayInterval;
@@ -49,11 +52,17 @@ public sealed partial class PollingStoreSource(
             {
                 if (ct.IsCancellationRequested) yield break;
 
+                var key = (msg.MessageId, msg.ConsumerId);
+
+                // Skip if already in-flight (prevents duplicate dispatch on re-fetch).
+                if (!_inFlight.TryAdd(key, 0)) continue;
+
                 // Dead-letter if retries exhausted; do not dispatch.
                 if (msg.RetryCount >= options.MaxDeadLetterRetries)
                 {
                     await SafeInvoke(() => store.DeadLetterAsync(msg.MessageId, msg.ConsumerId,
                         $"Max retries ({options.MaxDeadLetterRetries}) exceeded", ct), msg, "DeadLetter");
+                    _inFlight.TryRemove(key, out _);
                     continue;
                 }
 
@@ -61,10 +70,14 @@ public sealed partial class PollingStoreSource(
                 // starts when the Engine is ready to dispatch, not when the item is yielded.
                 yield return new DispatchItem(
                     Message: msg,
-                    OnProcessing: c => store.MarkAsProcessingAsync(msg.MessageId, msg.ConsumerId, c),
-                    OnAck: c => store.AcknowledgeAsync(msg.MessageId, msg.ConsumerId, c),
-                    OnFail: (reason, c) => store.MarkAsFailedAsync(msg.MessageId, msg.ConsumerId, reason, c),
-                    OnDeadLetter: (reason, c) => store.DeadLetterAsync(msg.MessageId, msg.ConsumerId, reason, c));
+                    OnProcessing: async c =>
+                    {
+                        try { await store.MarkAsProcessingAsync(msg.MessageId, msg.ConsumerId, c); }
+                        catch { _inFlight.TryRemove(key, out _); throw; }
+                    },
+                    OnAck: c => { _inFlight.TryRemove(key, out _); return store.AcknowledgeAsync(msg.MessageId, msg.ConsumerId, c); },
+                    OnFail: (reason, c) => { _inFlight.TryRemove(key, out _); return store.MarkAsFailedAsync(msg.MessageId, msg.ConsumerId, reason, c); },
+                    OnDeadLetter: (reason, c) => { _inFlight.TryRemove(key, out _); return store.DeadLetterAsync(msg.MessageId, msg.ConsumerId, reason, c); });
             }
 
             // Brief pause between non-empty batches to avoid hammering the store
