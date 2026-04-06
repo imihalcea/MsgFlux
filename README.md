@@ -315,7 +315,8 @@ Impact of `MaxDegreeOfParallelism` on AtLeastOnce throughput (5K messages):
 ## Known limitations
 
 - **In-process only**: MsgFlux is not a distributed message broker. All producers and consumers run in the same process.
-- **Payload size**: messages are serialized with JSON + Brotli compression. Very large payloads should be stored externally with a reference in the message.
+- **Payload size**: very large payloads should be stored externally with a reference in the message.
+- **JSON serialization is intentional**: all messages are serialized with JSON + Brotli compression, even for the in-memory path. This is by design — it enforces that message types are serializable, making a future migration to an external broker (RabbitMQ, Kafka, etc.) seamless. No code change needed on the producer/consumer side.
 - **Polling latency**: durable messages are not dispatched instantly — they wait for the next poll cycle (up to `ReplayInterval`).
 
 ## License
