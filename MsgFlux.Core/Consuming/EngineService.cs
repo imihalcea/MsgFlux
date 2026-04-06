@@ -58,6 +58,12 @@ public partial class EngineService : BackgroundService
             .Build();
     }
 
+    public override void Dispose()
+    {
+        _globalThrottle.Dispose();
+        base.Dispose();
+    }
+
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var tasks = _sources.Select(src => ConsumeSourceAsync(src, stoppingToken)).ToArray();
@@ -74,35 +80,40 @@ public partial class EngineService : BackgroundService
                 : Environment.ProcessorCount
         };
 
-        try
+        while (!ct.IsCancellationRequested)
         {
-            await Parallel.ForEachAsync(source.StreamAsync(ct), parallelOptions, async (item, token) =>
+            try
             {
-                await _globalThrottle.WaitAsync(token);
-                try
+                await Parallel.ForEachAsync(source.StreamAsync(ct), parallelOptions, async (item, token) =>
                 {
-                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                    timeoutCts.CancelAfter(_options.StaleProcessingTimeout);
-                    await DispatchAsync(item, timeoutCts.Token, token);
-                }
-                catch (OperationCanceledException) when (token.IsCancellationRequested)
-                {
-                    // shutdown
-                }
-                catch (Exception ex)
-                {
-                    LogProcessingError(_logger, item.Message.MessageType, ex);
-                }
-                finally
-                {
-                    _globalThrottle.Release();
-                }
-            });
-        }
-        catch (OperationCanceledException) { /* graceful shutdown */ }
-        catch (Exception ex)
-        {
-            LogSourceLoopError(_logger, ex);
+                    await _globalThrottle.WaitAsync(token);
+                    try
+                    {
+                        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                        timeoutCts.CancelAfter(_options.StaleProcessingTimeout);
+                        await DispatchAsync(item, timeoutCts.Token, token);
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        // shutdown
+                    }
+                    catch (Exception ex)
+                    {
+                        LogProcessingError(_logger, item.Message.MessageType, ex);
+                    }
+                    finally
+                    {
+                        _globalThrottle.Release();
+                    }
+                });
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                LogSourceLoopError(_logger, ex);
+                try { await Task.Delay(_options.ReplayInterval, ct); }
+                catch (OperationCanceledException) { break; }
+            }
         }
     }
 
