@@ -62,7 +62,7 @@ public sealed partial class Publisher(
                 ConsumerId = c.ConsumerId,
                 Payload = payloadBytes,
                 Headers = headers,
-                MessageType = messageType.Name,
+                MessageType = messageType.FullName!,
                 CreatedAt = now
             };
 

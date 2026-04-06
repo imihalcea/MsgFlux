@@ -36,7 +36,7 @@ public partial class EngineService : BackgroundService
         _logger = logger;
         _options = options;
         _sources = sources.ToArray();
-        _messageTypesByName = registry.GetMessageTypes().ToDictionary(t => t.Name, t => t);
+        _messageTypesByName = registry.GetMessageTypes().ToDictionary(t => t.FullName!, t => t);
 
         var maxConcurrency = options.MaxDegreeOfParallelism > 0
             ? options.MaxDegreeOfParallelism

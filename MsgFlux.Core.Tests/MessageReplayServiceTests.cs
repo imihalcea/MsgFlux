@@ -25,7 +25,7 @@ public class MessageReplayServiceTests
             ConsumerId = consumerId,
             Payload = payload,
             Headers = new Dictionary<string, string>(),
-            MessageType = nameof(ReplayTestMessage),
+            MessageType = typeof(ReplayTestMessage).FullName!,
             State = MessageState.Pending,
             CreatedAt = DateTimeOffset.UtcNow
         }});
@@ -82,7 +82,7 @@ public class MessageReplayServiceTests
             ConsumerId = consumerId,
             Payload = payload,
             Headers = new Dictionary<string, string>(),
-            MessageType = nameof(ReplayTestMessage),
+            MessageType = typeof(ReplayTestMessage).FullName!,
             State = MessageState.Pending,
             CreatedAt = DateTimeOffset.UtcNow
         }});

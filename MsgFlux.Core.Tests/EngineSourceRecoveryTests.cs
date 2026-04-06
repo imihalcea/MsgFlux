@@ -47,7 +47,7 @@ public class EngineSourceRecoveryTests
             ConsumerId = consumerId,
             Payload = serializer.Serialize(new RecoveryMessage { Value = "after-crash" }),
             Headers = new Dictionary<string, string>(),
-            MessageType = nameof(RecoveryMessage),
+            MessageType = typeof(RecoveryMessage).FullName!,
             CreatedAt = DateTimeOffset.UtcNow
         });
 

@@ -73,7 +73,7 @@ public class DispatchTests
                 ConsumerId = consumerId,
                 Payload = [0xDE, 0xAD, 0xBE, 0xEF], // Invalid Brotli/JSON
                 Headers = new Dictionary<string, string>(),
-                MessageType = nameof(UserCreated),
+                MessageType = typeof(UserCreated).FullName!,
                 CreatedAt = DateTimeOffset.UtcNow
             }
         });

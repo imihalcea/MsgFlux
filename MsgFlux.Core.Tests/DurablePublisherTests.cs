@@ -35,7 +35,7 @@ public class DurablePublisherTests
 
         // Assert
         Assert.That(store.Messages.Count, Is.EqualTo(1));
-        Assert.That(store.Messages.Values.First().MessageType, Is.EqualTo(nameof(DurableTestMessage)));
+        Assert.That(store.Messages.Values.First().MessageType, Is.EqualTo(typeof(DurableTestMessage).FullName));
         Assert.That(DurableTestHandler.HandledCount, Is.EqualTo(1));
 
         await engine.StopAsync(CancellationToken.None);

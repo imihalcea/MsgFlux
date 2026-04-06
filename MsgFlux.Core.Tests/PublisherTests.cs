@@ -34,7 +34,7 @@ public class PublisherTests
         Assert.That(await enumerator.MoveNextAsync(), Is.True);
 
         var msg = enumerator.Current.Message;
-        Assert.That(msg.MessageType, Is.EqualTo(nameof(TestEvent)));
+        Assert.That(msg.MessageType, Is.EqualTo(typeof(TestEvent).FullName));
         Assert.That(msg.Headers.ContainsKey("traceparent"), Is.True);
         Assert.That(msg.Headers["traceparent"], Is.Not.Empty);
 
