@@ -68,6 +68,10 @@ public sealed partial class PollingStoreSource(
                     OnFail: (reason, c) => store.MarkAsFailedAsync(msg.MessageId, msg.ConsumerId, reason, c),
                     OnDeadLetter: (reason, c) => store.DeadLetterAsync(msg.MessageId, msg.ConsumerId, reason, c));
             }
+
+            // Brief pause between non-empty batches to avoid hammering the store
+            // when messages keep failing and cycling through Pending/Failed states.
+            await SafeDelay(pollInterval, ct);
         }
     }
 
