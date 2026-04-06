@@ -88,6 +88,50 @@ public class PostgresMessageStoreTests
         Assert.That(fetched, Has.Count.EqualTo(5));
     }
 
+    [Test]
+    public async Task PersistAsync_Large_Bulk_Should_Insert_500_Rows()
+    {
+        var rows = Enumerable.Range(0, 500).Select(_ => CreateMessage()).ToList();
+        await _store.PersistAsync(rows);
+
+        var fetched = await _store.FetchUnprocessedAsync(maxCount: 600);
+        Assert.That(fetched, Has.Count.EqualTo(500));
+    }
+
+    [Test]
+    public async Task PersistAsync_Concurrent_Should_Not_Interfere()
+    {
+        // Two concurrent PersistAsync calls use separate connections with separate temp tables.
+        var batch1 = Enumerable.Range(0, 50)
+            .Select(i => CreateMessage(id: $"batch1-{i}")).ToList();
+        var batch2 = Enumerable.Range(0, 50)
+            .Select(i => CreateMessage(id: $"batch2-{i}")).ToList();
+
+        await Task.WhenAll(
+            _store.PersistAsync(batch1),
+            _store.PersistAsync(batch2));
+
+        var fetched = await _store.FetchUnprocessedAsync(maxCount: 200);
+        Assert.That(fetched, Has.Count.EqualTo(100));
+    }
+
+    [Test]
+    public async Task PersistAsync_Sequential_On_Pooled_Connection_Should_Not_Leak()
+    {
+        // Two sequential PersistAsync calls may reuse the same pooled connection.
+        // The temp table TRUNCATE must prevent stale rows from the first call.
+        var batch1 = Enumerable.Range(0, 10)
+            .Select(i => CreateMessage(id: $"seq1-{i}")).ToList();
+        var batch2 = Enumerable.Range(0, 10)
+            .Select(i => CreateMessage(id: $"seq2-{i}")).ToList();
+
+        await _store.PersistAsync(batch1);
+        await _store.PersistAsync(batch2);
+
+        var fetched = await _store.FetchUnprocessedAsync(maxCount: 30);
+        Assert.That(fetched, Has.Count.EqualTo(20));
+    }
+
     // --- MarkAsProcessingAsync ---
 
     [Test]

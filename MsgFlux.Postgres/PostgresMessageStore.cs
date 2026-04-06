@@ -1,7 +1,7 @@
-using System.Text;
 using System.Text.Json;
 using MsgFlux.Abstractions;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace MsgFlux.Postgres;
 
@@ -11,39 +11,48 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock) : I
     {
         if (messages.Count == 0) return;
 
-        // Build a single multi-VALUES insert. Good enough for small batches; will be replaced by COPY for bulk.
-        var sb = new StringBuilder(
-            "INSERT INTO msgflux_messages (message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at) VALUES ");
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
 
-        await using var cmd = dataSource.CreateCommand();
-        var paramIdx = 1;
-        for (var i = 0; i < messages.Count; i++)
+        // Create a temp table, COPY into it, then INSERT ... ON CONFLICT to handle duplicates.
+        await using var createTemp = new NpgsqlCommand("""
+            CREATE TEMP TABLE IF NOT EXISTS _msgflux_bulk (
+                message_id TEXT, consumer_id TEXT, payload BYTEA,
+                headers JSONB, message_type TEXT, state SMALLINT,
+                retry_count INT, created_at TIMESTAMPTZ
+            )
+            """, conn);
+        await createTemp.ExecuteNonQueryAsync(ct);
+
+        await using var truncate = new NpgsqlCommand("TRUNCATE _msgflux_bulk", conn);
+        await truncate.ExecuteNonQueryAsync(ct);
+
+        await using var writer = await conn.BeginBinaryImportAsync(
+            "COPY _msgflux_bulk (message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at) FROM STDIN (FORMAT BINARY)",
+            ct);
+
+        foreach (var m in messages)
         {
-            if (i > 0) sb.Append(", ");
-            sb.Append('(')
-              .Append('$').Append(paramIdx++).Append(", ")
-              .Append('$').Append(paramIdx++).Append(", ")
-              .Append('$').Append(paramIdx++).Append(", ")
-              .Append('$').Append(paramIdx++).Append("::jsonb, ")
-              .Append('$').Append(paramIdx++).Append(", ")
-              .Append('$').Append(paramIdx++).Append(", ")
-              .Append('$').Append(paramIdx++).Append(", ")
-              .Append('$').Append(paramIdx++).Append(')');
-
-            var m = messages[i];
-            cmd.Parameters.AddWithValue(m.MessageId);
-            cmd.Parameters.AddWithValue(m.ConsumerId);
-            cmd.Parameters.AddWithValue(m.Payload);
-            cmd.Parameters.AddWithValue(JsonSerializer.Serialize(m.Headers));
-            cmd.Parameters.AddWithValue(m.MessageType);
-            cmd.Parameters.AddWithValue((short)m.State);
-            cmd.Parameters.AddWithValue(m.RetryCount);
-            cmd.Parameters.AddWithValue(m.CreatedAt);
+            await writer.StartRowAsync(ct);
+            await writer.WriteAsync(m.MessageId, NpgsqlDbType.Text, ct);
+            await writer.WriteAsync(m.ConsumerId, NpgsqlDbType.Text, ct);
+            await writer.WriteAsync(m.Payload, NpgsqlDbType.Bytea, ct);
+            await writer.WriteAsync(JsonSerializer.Serialize(m.Headers), NpgsqlDbType.Jsonb, ct);
+            await writer.WriteAsync(m.MessageType, NpgsqlDbType.Text, ct);
+            await writer.WriteAsync((short)m.State, NpgsqlDbType.Smallint, ct);
+            await writer.WriteAsync(m.RetryCount, NpgsqlDbType.Integer, ct);
+            await writer.WriteAsync(m.CreatedAt, NpgsqlDbType.TimestampTz, ct);
         }
-        sb.Append(" ON CONFLICT (message_id, consumer_id) DO NOTHING");
 
-        cmd.CommandText = sb.ToString();
-        await cmd.ExecuteNonQueryAsync(ct);
+        await writer.CompleteAsync(ct);
+        await writer.CloseAsync(ct);
+
+        await using var merge = new NpgsqlCommand("""
+            INSERT INTO msgflux_messages (message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at)
+            SELECT message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at
+            FROM _msgflux_bulk
+            ON CONFLICT (message_id, consumer_id) DO NOTHING
+            """, conn);
+        await merge.ExecuteNonQueryAsync(ct);
     }
 
     public async Task MarkAsProcessingAsync(string messageId, string consumerId, CancellationToken ct = default)

@@ -100,6 +100,9 @@ static ServiceProvider BuildProvider(string mode, string connectionString)
         options.WithChannelCapacity(15_000);
         options.WithRetry(1, TimeSpan.FromMilliseconds(10));
         options.WithReplayInterval(TimeSpan.FromMilliseconds(50));
+        options.WithBufferedPublishing(
+            flushInterval: TimeSpan.FromMilliseconds(100),
+            flushThreshold: 50);
 
         switch (mode)
         {
