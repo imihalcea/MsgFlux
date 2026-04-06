@@ -227,6 +227,7 @@ public class EngineSourceFairnessTests
             System.Threading.Channels.Channel.CreateUnbounded<Message>();
 
         public void Enqueue(Message msg) => _channel.Writer.TryWrite(msg);
+        public void Complete() => _channel.Writer.TryComplete();
 
         public async IAsyncEnumerable<DispatchItem> StreamAsync(
             [EnumeratorCancellation] CancellationToken ct)
@@ -248,6 +249,7 @@ public class EngineSourceFairnessTests
             System.Threading.Channels.Channel.CreateUnbounded<Message>();
 
         public void Enqueue(Message msg) => _channel.Writer.TryWrite(msg);
+        public void Complete() => _channel.Writer.TryComplete();
 
         public async IAsyncEnumerable<DispatchItem> StreamAsync(
             [EnumeratorCancellation] CancellationToken ct)

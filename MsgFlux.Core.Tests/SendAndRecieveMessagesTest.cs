@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using MsgFlux.Abstractions;
 using NUnit.Framework;
 
@@ -52,5 +53,29 @@ public class SendAndRecieveMessagesTest
 
         var completed = await Task.WhenAny(blockedTask, Task.Delay(1000));
         Assert.That(completed, Is.EqualTo(blockedTask), "Producer should resume when space becomes available");
+    }
+
+    [Test]
+    public async Task PersistAsync_Should_Fail_After_Shutdown()
+    {
+        var source = new InMemoryMessageSource(new MsgFluxOptions());
+
+        // Simulate engine consuming then shutting down
+        using var cts = new CancellationTokenSource();
+        var streamTask = Task.Run(async () =>
+        {
+            await foreach (var _ in source.StreamAsync(cts.Token)) { }
+        });
+
+        // Shutdown: cancel the consumer
+        await cts.CancelAsync();
+        try { await streamTask; } catch (OperationCanceledException) { }
+
+        // Signal the source is closed
+        source.Complete();
+
+        // A late publish should fail — the bus is closed
+        Assert.ThrowsAsync<ChannelClosedException>(
+            () => source.PersistAsync([CreateMessage("late")]));
     }
 }

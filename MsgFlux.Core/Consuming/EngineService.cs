@@ -58,6 +58,13 @@ public partial class EngineService : BackgroundService
             .Build();
     }
 
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken);
+        foreach (var source in _sources)
+            source.Complete();
+    }
+
     public override void Dispose()
     {
         _globalThrottle.Dispose();

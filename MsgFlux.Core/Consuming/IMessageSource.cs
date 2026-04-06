@@ -11,6 +11,12 @@ namespace MsgFlux.Core;
 public interface IMessageSource
 {
     IAsyncEnumerable<DispatchItem> StreamAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Signals that no more messages will be produced. Implementations should reject
+    /// any subsequent writes after this call.
+    /// </summary>
+    void Complete();
 }
 
 /// <summary>

@@ -79,4 +79,6 @@ internal sealed class NullMessageSource : IMessageSource
         catch (OperationCanceledException) { }
         yield break;
     }
+
+    public void Complete() { }
 }

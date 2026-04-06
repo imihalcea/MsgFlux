@@ -85,6 +85,8 @@ public class EngineSourceRecoveryTests
         private readonly List<Message> _pending = [];
         private readonly Lock _lock = new();
 
+        public void Complete() { }
+
         public void Inject(Message msg)
         {
             lock (_lock) _pending.Add(msg);

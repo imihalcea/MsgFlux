@@ -100,6 +100,8 @@ public sealed partial class PollingStoreSource(
         }
     }
 
+    public void Complete() { } // Durable store needs no completion — messages persist independently.
+
     [LoggerMessage(LogLevel.Error, "Error fetching unprocessed messages from durable store")]
     static partial void LogFetchError(ILogger logger, Exception ex);
 

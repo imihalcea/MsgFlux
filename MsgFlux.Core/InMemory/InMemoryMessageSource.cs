@@ -23,6 +23,8 @@ public sealed class InMemoryMessageSource : IMessageSource
         });
     }
 
+    public void Complete() => _channel.Writer.Complete();
+
     /// <summary>
     /// Enqueues messages. Blocks (awaits) if the channel is full — producer-side backpressure.
     /// </summary>
