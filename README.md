@@ -273,7 +273,7 @@ public class OrderCreatedHandler(IPublish publisher) : IConsume<OrderCreated>
 
 Benchmarks measured end-to-end: publish + store persistence + polling + dispatch + consumer execution.
 
-Environment: .NET 10, PostgreSQL 17 (Testcontainers), Ubuntu 25.10, 64 GB RAM.
+Environment: .NET 10, PostgreSQL 17 (Testcontainers), Ubuntu 25.10, Intel Core Ultra 9 275HX (24 cores), 64 GB RAM.
 
 | Mode | 100 msg | 1K msg | 5K msg |
 |------|---------|--------|--------|
