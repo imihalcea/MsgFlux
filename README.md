@@ -177,7 +177,7 @@ builder.Services.AddMsgFlux(options =>
 | `PollingBatchSize` | 500 | Max messages fetched per poll cycle |
 | `BufferFlushThreshold` | 1 | Flush durable buffer when this many messages accumulate (1 = immediate) |
 | `BufferFlushInterval` | 0 | Periodic flush interval (0 = only flush on threshold) |
-| `PurgeOlderThan` | 7 days | Purge completed messages older than this |
+| `PurgeOlderThan` | 4 hours | Purge completed messages older than this |
 | `PurgeInterval` | 1 hour | How often the purge service runs |
 
 ## Resilience

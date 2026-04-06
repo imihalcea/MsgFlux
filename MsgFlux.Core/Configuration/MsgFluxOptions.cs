@@ -10,7 +10,7 @@ public class MsgFluxOptions
     public int MaxDegreeOfParallelism { get; set; } = Environment.ProcessorCount;
     public TimeSpan StaleProcessingTimeout { get; set; } = TimeSpan.FromMinutes(5);
     public int MaxDeadLetterRetries { get; set; } = 3;
-    public TimeSpan PurgeOlderThan { get; set; } = TimeSpan.FromDays(7);
+    public TimeSpan PurgeOlderThan { get; set; } = TimeSpan.FromHours(4);
     public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromHours(1);
     public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(1);
     public int PollingBatchSize { get; set; } = 500;
