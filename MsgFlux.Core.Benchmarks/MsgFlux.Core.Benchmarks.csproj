@@ -9,10 +9,12 @@
 
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.4.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\MsgFlux.Core\MsgFlux.Core.csproj" />
+    <ProjectReference Include="..\MsgFlux.Postgres\MsgFlux.Postgres.csproj" />
   </ItemGroup>
 
 </Project>
