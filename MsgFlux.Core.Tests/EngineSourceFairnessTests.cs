@@ -91,6 +91,109 @@ public class EngineSourceFairnessTests
             $"Fast message took {sw.ElapsedMilliseconds}ms — likely starved by busy source");
     }
 
+    [Test]
+    public async Task Messages_From_Multiple_Sources_Should_Interleave()
+    {
+        // Arrange — two sources (A and B), DOP=2 with non-instant handlers.
+        // With DOP=2, Source A grabs up to 2 slots initially, but when one frees
+        // up, Source B competes fairly for the next slot. We should see interleaving
+        // rather than one source fully drained before the other.
+        var sourceA = new TrackedSource("A");
+        var sourceB = new TrackedSource("B");
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddMsgFlux(options =>
+        {
+            options
+                .WithMaxDegreeOfParallelism(2)
+                .WithRetry(1, TimeSpan.FromMilliseconds(1))
+                .AddConsumer<OrderTracker>();
+        });
+
+        // Replace default sources with our tracked ones
+        services.AddSingleton<IMessageSource>(sourceA);
+        services.AddSingleton<IMessageSource>(sourceB);
+
+        OrderTracker.Reset();
+        var provider = services.BuildServiceProvider();
+        var serializer = provider.GetRequiredService<ISerializer>();
+        var consumerId = Registry.GetConsumerId(typeof(OrderTracker));
+
+        // Seed both sources with 6 messages each, tagged with source origin
+        for (var i = 1; i <= 6; i++)
+        {
+            sourceA.Enqueue(MakeMessage($"A{i}", consumerId, serializer));
+            sourceB.Enqueue(MakeMessage($"B{i}", consumerId, serializer));
+        }
+
+        var engine = provider.GetServices<IHostedService>().OfType<EngineService>().First();
+        await engine.StartAsync(CancellationToken.None);
+
+        // Wait for all 12 messages to be handled
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (DateTime.UtcNow < deadline && OrderTracker.Order.Count < 12)
+            await Task.Delay(10);
+
+        await engine.StopAsync(CancellationToken.None);
+
+        // Assert — all 12 messages handled
+        var order = OrderTracker.Order.ToList();
+        Console.WriteLine($"Dispatch order: [{string.Join(", ", order)}]");
+        Assert.That(order, Has.Count.EqualTo(12));
+
+        // Assert — sources should interleave after the initial DOP fill.
+        // With DOP=2, Source A may grab the first 2 slots, but after that
+        // both sources compete fairly. A run of 6+ means one source was fully
+        // drained before the other started — no interleaving at all.
+        var maxConsecutive = MaxConsecutiveRun(order);
+        Assert.That(maxConsecutive, Is.LessThan(6),
+            $"Dispatch order [{string.Join(", ", order)}] shows one source monopolizing dispatch");
+    }
+
+    private static Message MakeMessage(string tag, string consumerId, ISerializer serializer) => new()
+    {
+        MessageId = Guid.NewGuid().ToString(),
+        ConsumerId = consumerId,
+        Payload = serializer.Serialize(new TaggedMessage { Tag = tag }),
+        Headers = new Dictionary<string, string>(),
+        MessageType = typeof(TaggedMessage).FullName!,
+        CreatedAt = DateTimeOffset.UtcNow
+    };
+
+    private static int MaxConsecutiveRun(List<string> order)
+    {
+        var max = 1;
+        var current = 1;
+        for (var i = 1; i < order.Count; i++)
+        {
+            if (order[i][0] == order[i - 1][0])
+                current++;
+            else
+                current = 1;
+            max = Math.Max(max, current);
+        }
+        return max;
+    }
+
+    public class TaggedMessage
+    {
+        public string Tag { get; set; } = string.Empty;
+    }
+
+    public class OrderTracker : IConsume<TaggedMessage>
+    {
+        public static readonly List<string> Order = [];
+        private static readonly Lock Lock = new();
+        public static void Reset() { lock (Lock) Order.Clear(); }
+
+        public async Task HandleAsync(TaggedMessage message, CancellationToken ct)
+        {
+            lock (Lock) Order.Add(message.Tag);
+            await Task.Delay(50, ct); // hold the semaphore slot to create contention
+        }
+    }
+
     public class SlowMessage { }
     public class FastMessage { }
 
@@ -115,6 +218,23 @@ public class EngineSourceFairnessTests
         {
             Interlocked.Increment(ref HandledCount);
             return Task.CompletedTask;
+        }
+    }
+
+    public class TrackedSource(string name) : IMessageSource
+    {
+        private readonly System.Threading.Channels.Channel<Message> _channel =
+            System.Threading.Channels.Channel.CreateUnbounded<Message>();
+
+        public void Enqueue(Message msg) => _channel.Writer.TryWrite(msg);
+
+        public async IAsyncEnumerable<DispatchItem> StreamAsync(
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            await foreach (var msg in _channel.Reader.ReadAllAsync(ct))
+            {
+                yield return new DispatchItem(msg);
+            }
         }
     }
 
