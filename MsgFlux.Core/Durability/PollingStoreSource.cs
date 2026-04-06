@@ -92,46 +92,39 @@ public sealed partial class PollingStoreSource(
         }
     }
 
-    private async Task FlushPendingClaimsAsync(CancellationToken ct)
-    {
-        if (_pendingClaims.IsEmpty) return;
-
-        var items = new List<(Guid, string)>();
-        while (_pendingClaims.TryDequeue(out var item))
-            items.Add(item);
-
-        if (items.Count == 0) return;
-
-        try
+    private Task FlushPendingClaimsAsync(CancellationToken ct)
+        => FlushQueueAsync(_pendingClaims, store.MarkAsProcessingBatchAsync, LogClaimFlushError, onFailure: items =>
         {
-            await store.MarkAsProcessingBatchAsync(items, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            LogClaimFlushError(logger, items.Count, ex);
-            // Restore: remove from in-flight so they can be re-fetched and retried.
             foreach (var item in items)
                 _inFlight.TryRemove(item, out _);
-        }
-    }
+        }, ct);
 
-    private async Task FlushPendingAcksAsync(CancellationToken ct)
+    private Task FlushPendingAcksAsync(CancellationToken ct)
+        => FlushQueueAsync(_pendingAcks, store.AcknowledgeBatchAsync, LogAckFlushError, ct: ct);
+
+    private async Task FlushQueueAsync(
+        ConcurrentQueue<(Guid, string)> queue,
+        Func<IReadOnlyList<(Guid, string)>, CancellationToken, Task> persist,
+        Action<ILogger, int, Exception> logError,
+        Action<List<(Guid, string)>>? onFailure = null,
+        CancellationToken ct = default)
     {
-        if (_pendingAcks.IsEmpty) return;
+        if (queue.IsEmpty) return;
 
         var items = new List<(Guid, string)>();
-        while (_pendingAcks.TryDequeue(out var item))
+        while (queue.TryDequeue(out var item))
             items.Add(item);
 
         if (items.Count == 0) return;
 
         try
         {
-            await store.AcknowledgeBatchAsync(items, ct);
+            await persist(items, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            LogAckFlushError(logger, items.Count, ex);
+            logError(logger, items.Count, ex);
+            onFailure?.Invoke(items);
         }
     }
 
