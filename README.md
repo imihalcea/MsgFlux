@@ -1,207 +1,260 @@
 # MsgFlux
 
-MsgFlux is a lightweight in-process messaging library for .NET, designed to facilitate asynchronous communication between components via a producer-consumer model. It natively integrates resilience (via Polly) and observability (via OpenTelemetry).
+Lightweight in-process messaging library for .NET 10. Decoupled async communication between components via typed producers and consumers, with opt-in durable delivery.
 
 ## Features
 
-*   **In-process message bus**: Decoupled communication between components.
-*   **Pub/Sub Model**: Message publication and consumption via typed handlers.
-*   **Built-in Resilience**: Uses [Polly](https://github.com/App-vNext/Polly) for retry management (automatic retries on failure).
-*   **Observability**: OpenTelemetry support (ActivitySource "MsgFlux") for distributed tracing.
-*   **Dependency Injection**: Seamless integration with `Microsoft.Extensions.DependencyInjection`.
-*   **Asynchronous Processing**: Uses `System.Threading.Channels` for efficient, non-blocking processing.
-*   **Opt-in Durability**: Persist messages to survive process crashes, with replay on startup and automatic purge.
+- **Pub/Sub** with typed messages and consumers (`IConsume<T>`)
+- **Per-consumer delivery semantics**: `AtMostOnce` (in-memory, fire-and-forget) or `AtLeastOnce` (durable, persisted to a store)
+- **Resilience**: configurable Polly retry with exponential backoff
+- **Observability**: OpenTelemetry distributed tracing (`ActivitySource "MsgFlux"`)
+- **Backpressure**: bounded channels with producer-side backpressure
+- **Graceful shutdown**: in-flight dispatches are awaited before the host exits
+- **Pluggable storage**: implement `IMessageStore` for any backend (PostgreSQL provider included)
 
-## Installation
+## Quick start
 
-(To be completed with specific installation instructions, e.g., via NuGet if published)
-
-## Usage
-
-### 1. Configuration
-
-Add MsgFlux to your service container in `Program.cs` or `Startup.cs`. Register your consumers explicitly via the options callback.
+### 1. Register MsgFlux
 
 ```csharp
-using MsgFlux.Core;
-
 builder.Services.AddMsgFlux(options =>
 {
-    options.AddConsumer<UserCreatedConsumer>();
+    options.AddConsumer<OrderCreatedHandler>();
+    options.AddConsumer<PaymentHandler>();
 });
 ```
 
-### 2. Defining a Message
+### 2. Define a message
 
-A message can be any class or record.
+Any class or record works.
 
 ```csharp
-public record UserCreated(string UserId, string Email);
+public record OrderCreated(string OrderId, decimal Amount);
 ```
 
-### 3. Creating a Consumer
-
-Implement the `IConsume<T>` interface to define how to process a message.
+### 3. Implement a consumer
 
 ```csharp
-using MsgFlux.Core;
-
-public class UserCreatedConsumer : IConsume<UserCreated>
+public class OrderCreatedHandler(ILogger<OrderCreatedHandler> logger) : IConsume<OrderCreated>
 {
-    private readonly ILogger<UserCreatedConsumer> _logger;
-
-    public UserCreatedConsumer(ILogger<UserCreatedConsumer> logger)
+    public Task HandleAsync(OrderCreated message, CancellationToken ct)
     {
-        _logger = logger;
-    }
-
-    public async Task HandleAsync(UserCreated message, CancellationToken ct)
-    {
-        _logger.LogInformation("New user created: {UserId}, Email: {Email}", message.UserId, message.Email);
-        await Task.CompletedTask;
+        logger.LogInformation("Order {OrderId} received: {Amount}", message.OrderId, message.Amount);
+        return Task.CompletedTask;
     }
 }
 ```
 
-### 4. Publishing a Message
+Consumers are resolved from DI as **scoped** services. You can inject any dependency.
 
-Inject `IPublish` to send messages.
+### 4. Publish a message
 
 ```csharp
-using MsgFlux.Core;
-using Microsoft.AspNetCore.Mvc;
-
-[ApiController]
-[Route("[controller]")]
-public class UserController : ControllerBase
+public class OrderController(IPublish publisher) : ControllerBase
 {
-    private readonly IPublish _publisher;
-
-    public UserController(IPublish publisher)
-    {
-        _publisher = publisher;
-    }
-
     [HttpPost]
-    public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request)
+    public async Task<IActionResult> Create([FromBody] CreateOrderRequest req)
     {
-        var userId = Guid.NewGuid().ToString();
-
-        await _publisher.PublishAsync(new UserCreated(userId, request.Email));
-
-        return Ok(new { UserId = userId });
+        await publisher.PublishAsync(new OrderCreated(Guid.NewGuid().ToString(), req.Amount));
+        return Accepted();
     }
 }
 ```
 
-## Durability
+One publish fans out to all registered consumers for that message type. Each consumer gets its own copy.
 
-By default, MsgFlux is purely in-memory. If the process crashes, messages in transit are lost. The durability layer adds opt-in persistence behind the `IMessageStore` abstraction.
+## Delivery semantics
 
-### Enabling Durability with PostgreSQL
+Each consumer is registered with a delivery guarantee:
 
 ```csharp
-using MsgFlux.Core;
-using MsgFlux.Postgres;
+options.AddConsumer<NotificationHandler>();                          // AtMostOnce (default)
+options.AddConsumer<PaymentHandler>(Semantics.AtLeastOnce);         // durable
+```
+
+| Semantic | Behavior | Requires store |
+|----------|----------|----------------|
+| `AtMostOnce` | In-memory channel, fire-and-forget. Lost on process crash. | No |
+| `AtLeastOnce` | Persisted before dispatch. Replayed on failure. Dead-lettered after max retries. | Yes |
+
+Different consumers of the **same message type** can have different semantics.
+
+`AtLeastOnce` consumers **must be idempotent** — a message may be delivered more than once after a failure.
+
+## Durable delivery with PostgreSQL
+
+```csharp
+// Register the store BEFORE AddMsgFlux
+builder.Services.AddMsgFluxPostgres("Host=localhost;Database=myapp");
 
 builder.Services.AddMsgFlux(options =>
 {
     options
-        .WithDurability()
-        .WithPurge(olderThan: TimeSpan.FromDays(3), interval: TimeSpan.FromMinutes(30))
-        .AddConsumer<UserCreatedConsumer>();
+        .AddConsumer<AuditLogHandler>(Semantics.AtLeastOnce)
+        .AddConsumer<NotificationHandler>(); // AtMostOnce, no store needed
 });
-
-builder.Services.AddMsgFluxPostgres("Host=localhost;Database=msgflux");
 ```
 
-### How It Works
+The PostgreSQL provider auto-creates the required table and indexes on startup. Disable with:
 
-When durability is enabled:
+```csharp
+builder.Services.AddMsgFluxPostgres("...", opts => opts.AutoCreateSchema = false);
+```
 
-1. **Persist-then-enqueue**: Messages are persisted to the store *before* being written to the in-memory channel. If the store is unavailable, the publish fails and the message is not enqueued.
-2. **Acknowledge on success**: After all consumers process a message successfully, it is marked as `Completed`.
-3. **Mark as failed**: If a consumer fails after all retries, the message is marked as `Failed` with an incremented retry count.
-4. **Periodic replay**: A `MessageReplayService` periodically fetches all `Pending`, `Failed`, and stale `Processing` messages and re-injects them into the channels.
-5. **Dead-letter**: During replay, messages that exceeded `MaxDeadLetterRetries` are moved to `DeadLettered` state instead of being re-enqueued.
-6. **Automatic purge**: A `MessagePurgeService` periodically deletes old `Completed` messages.
+### How durable delivery works
 
-### Configuration Options
+1. **Publish**: messages are buffered and flushed to the store in batch
+2. **Poll**: a background loop fetches unprocessed messages and dispatches them to consumers
+3. **Ack/Fail**: on success the message is marked `Completed`; on failure it is marked `Failed` with retry count incremented
+4. **Retry**: failed messages are picked up on the next poll cycle and re-dispatched
+5. **Dead-letter**: messages exceeding `MaxDeadLetterRetries` are moved to `DeadLettered` state
+6. **Purge**: a background service periodically deletes old completed messages
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `WithDurability()` | `false` | Enables the durability layer |
-| `WithStaleProcessingTimeout(TimeSpan)` | 5 minutes | Processing timeout per message and stale detection threshold |
-| `MaxDeadLetterRetries` | 3 | Failed messages exceeding this count are dead-lettered on replay |
-| `WithReplayInterval(TimeSpan)` | 30 seconds | How often the replay service checks for unprocessed messages |
-| `WithPurge(olderThan, interval)` | 7 days / 1 hour | Purge completed messages older than `olderThan`, checked every `interval` |
-
-### Message Lifecycle
+### Message lifecycle
 
 ```
-Pending ──▶ Processing ──▶ Completed ──▶ (purged)
-                │
-                ▼
-             Failed ──▶ (replayed) ──▶ Processing ──▶ ...
-                │
-                ▼ (after MaxDeadLetterRetries)
+Pending --> Processing --> Completed --> (purged)
+                |
+                v
+             Failed --> (re-polled) --> Processing --> ...
+                |
+                v  (MaxDeadLetterRetries exceeded)
            DeadLettered
 ```
 
-### PostgreSQL Provider Options
+### Custom store provider
+
+Implement `IMessageStore` from `MsgFlux.Abstractions` and register it before `AddMsgFlux`:
 
 ```csharp
-builder.Services.AddMsgFluxPostgres("Host=localhost;Database=msgflux", options =>
+builder.Services.AddSingleton<IMessageStore, MyCustomStore>();
+builder.Services.AddMsgFlux(options =>
 {
-    options.AutoCreateSchema = true; // default: true, creates table and indexes on startup
+    options.AddConsumer<MyHandler>(Semantics.AtLeastOnce);
 });
 ```
 
-The provider uses `SELECT ... FOR UPDATE SKIP LOCKED` for safe multi-instance replay and `ON CONFLICT DO NOTHING` for idempotent persistence.
+## Configuration
 
-### Custom Providers
-
-Implement `IMessageStore` from `MsgFlux.Abstractions` to plug in any storage backend. Register it before calling `AddMsgFlux`:
+All options have sensible defaults. Override via the fluent API:
 
 ```csharp
-builder.Services.AddSingleton<IMessageStore, MyCustomMessageStore>();
-builder.Services.AddMsgFlux(options => options.WithDurability().AddConsumer<MyConsumer>());
+builder.Services.AddMsgFlux(options =>
+{
+    options
+        .WithMaxDegreeOfParallelism(4)
+        .WithRetry(maxAttempts: 5, delay: TimeSpan.FromMilliseconds(500))
+        .WithStaleProcessingTimeout(TimeSpan.FromMinutes(2))
+        .WithMaxDeadLetterRetries(5)
+        .WithMaxPayloadSizeKb(128)
+        .WithChannelCapacity(5000)
+        .WithReplayInterval(TimeSpan.FromSeconds(10))
+        .WithPollingBatchSize(100)
+        .WithBufferedPublishing(
+            flushInterval: TimeSpan.FromMilliseconds(100),
+            flushThreshold: 50)
+        .WithPurge(
+            olderThan: TimeSpan.FromDays(3),
+            interval: TimeSpan.FromMinutes(30))
+        .AddConsumer<MyHandler>(Semantics.AtLeastOnce);
+});
+```
+
+### Options reference
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `MaxDegreeOfParallelism` | `ProcessorCount` | Global concurrency cap across all sources |
+| `MaxRetryAttempts` | 3 | Polly retry attempts per dispatch |
+| `RetryDelay` | 200ms | Base delay for exponential backoff |
+| `StaleProcessingTimeout` | 5 min | Per-dispatch timeout; also used to detect stuck messages |
+| `MaxDeadLetterRetries` | 3 | Failed messages beyond this count are dead-lettered |
+| `MaxPayloadSizeKb` | 64 | Publish rejects payloads larger than this |
+| `ChannelCapacity` | 1000 | Bounded channel size for AtMostOnce consumers |
+| `ReplayInterval` | 5s | Polling interval for durable message replay |
+| `PollingBatchSize` | 500 | Max messages fetched per poll cycle |
+| `BufferFlushThreshold` | 1 | Flush durable buffer when this many messages accumulate (1 = immediate) |
+| `BufferFlushInterval` | 0 | Periodic flush interval (0 = only flush on threshold) |
+| `PurgeOlderThan` | 7 days | Purge completed messages older than this |
+| `PurgeInterval` | 1 hour | How often the purge service runs |
+
+## Resilience
+
+Every dispatch is wrapped in a Polly retry pipeline with exponential backoff. Configure via `WithRetry`:
+
+```csharp
+options.WithRetry(maxAttempts: 3, delay: TimeSpan.FromMilliseconds(200));
+```
+
+If all retries are exhausted:
+- **AtMostOnce**: the failure is logged and the message is dropped
+- **AtLeastOnce**: the message is marked `Failed` and retried on the next poll cycle, up to `MaxDeadLetterRetries`
+
+## Processing timeout
+
+Every dispatch is bounded by `StaleProcessingTimeout` (default: 5 minutes). If a consumer exceeds this duration:
+
+- The `CancellationToken` passed to `HandleAsync` is cancelled
+- In durable mode, the message is marked as `Failed` and will be retried
+
+Cancellation in .NET is cooperative. Consumers **must** observe the token (pass it to `await` calls, check `ct.IsCancellationRequested`) for the timeout to take effect.
+
+## Observability
+
+MsgFlux creates OpenTelemetry activities via `ActivitySource("MsgFlux")`:
+
+- **Publish**: `PublishAsync` creates a `Producer` activity with trace context injected into message headers (`traceparent`, `tracestate`)
+- **Dispatch**: `EngineService` creates a `Consumer` activity linked to the publish trace
+
+To capture traces, add the MsgFlux source to your OpenTelemetry configuration:
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing.AddSource("MsgFlux"));
 ```
 
 ## Architecture
 
 ```
-MsgFlux.Abstractions   (0 external dependencies)
-       ▲
-       │
-MsgFlux.Core ──ref──▶ MsgFlux.Abstractions
-       ▲
-       │
-MsgFlux.Postgres ──ref──▶ MsgFlux.Abstractions + Npgsql
+MsgFlux.Abstractions   (zero external dependencies)
+       ^
+       |
+MsgFlux.Core           (Polly, RecyclableMemoryStream, Hosting/DI abstractions)
+       ^
+       |
+MsgFlux.Postgres       (Npgsql)  -- optional
 ```
 
-*   **Engine**: Hosted service (`BackgroundService`) that listens to channels and distributes messages to the appropriate consumers.
-*   **Publisher / DurablePublisher**: Services responsible for serializing and sending messages into channels. `DurablePublisher` persists before enqueue.
-*   **Registry**: Maintains the list of message types and associated consumers.
-*   **RxTx**: Abstraction over `System.Threading.Channels` for message transmission.
-*   **MessageReplayService**: Periodically replays unprocessed messages (durability mode).
-*   **MessagePurgeService**: Periodically purges old completed messages (durability mode).
+**Core components:**
 
-## Resilience
+- **EngineService** -- `BackgroundService` that consumes from all `IMessageSource`s, acquires a global semaphore slot, and dispatches to the matching `IConsume<T>` consumer
+- **Publisher** -- serializes messages (JSON + Brotli), routes to `DurableBuffer` or `InMemoryMessageSource` based on consumer semantics
+- **DurableBuffer** -- batches durable writes and flushes to `IMessageStore`; restores batch on failure
+- **InMemoryMessageSource** -- bounded `Channel<Message>` for AtMostOnce consumers
+- **PollingStoreSource** -- polls `IMessageStore` for unprocessed messages, deduplicates in-flight items, defers claim to dispatch time
+- **MessagePurgeService** -- periodically purges old completed messages from the store
+- **Registry** -- maps message types to consumers with stable FNV-1a hash-based consumer IDs
 
-MsgFlux uses a default resilience pipeline configured with:
-*   3 retry attempts.
-*   Exponential backoff starting at 200ms.
+## Event chaining
 
-## Processing Timeout
+Consumers can inject `IPublish` to publish new messages, creating processing pipelines:
 
-Every message dispatch is bounded by `StaleProcessingTimeout` (default: 5 minutes), in both in-memory and durable modes. If a consumer exceeds this duration:
+```csharp
+public class OrderCreatedHandler(IPublish publisher) : IConsume<OrderCreated>
+{
+    public async Task HandleAsync(OrderCreated message, CancellationToken ct)
+    {
+        // Process order...
+        await publisher.PublishAsync(new InventoryReserved(message.OrderId), ct);
+    }
+}
+```
 
-- The `CancellationToken` passed to `HandleAsync` is signalled
-- The processing slot is freed immediately
-- In durable mode, the message is marked as `Failed` and will be retried by the replay service
+## Known limitations
 
-**Important**: `CancellationToken` in .NET is cooperative. Consumers **must** observe the token (pass it to `await`, check `ct.IsCancellationRequested`) for the timeout to take effect. A consumer that blocks without checking the token (e.g. `Thread.Sleep`, synchronous I/O without token) will not be interrupted — the slot is still freed, but the underlying work continues as a background task.
+- **No WAL**: the `DurableBuffer` holds messages in memory before flushing to the store. If the process crashes before a flush, those messages are lost. For most workloads the default `BufferFlushThreshold=1` (immediate flush) minimizes this window.
+- **In-process only**: MsgFlux is not a distributed message broker. All producers and consumers run in the same process.
+- **Payload size**: messages are serialized with JSON + Brotli compression. Very large payloads should be stored externally with a reference in the message.
 
 ## License
 
