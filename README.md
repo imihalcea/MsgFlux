@@ -252,11 +252,54 @@ public class OrderCreatedHandler(IPublish publisher) : IConsume<OrderCreated>
 }
 ```
 
+## When to use MsgFlux
+
+**Good fit:**
+
+- Decoupling components within a single application (event-driven architecture without infrastructure)
+- Background processing triggered by API calls (send email, generate PDF, sync to external system)
+- Event chaining pipelines where one action triggers another
+- Applications already using PostgreSQL that want durable messaging without adding a broker
+- Moderate throughput requirements (up to ~15K durable msg/s, ~180K in-memory msg/s)
+
+**Not a good fit:**
+
+- Cross-process or cross-service communication (use RabbitMQ, Kafka, or a cloud broker)
+- Very high throughput durable messaging (>50K msg/s — use a dedicated broker)
+- Exactly-once delivery (MsgFlux provides at-least-once; consumers must be idempotent)
+- Long-term message retention or audit log (completed messages are purged after 4 hours by default)
+
+## Performance
+
+Benchmarks measured end-to-end: publish + store persistence + polling + dispatch + consumer execution.
+
+Environment: .NET 10, PostgreSQL 17 (Testcontainers), Ubuntu 25.10, 64 GB RAM.
+
+| Mode | 100 msg | 1K msg | 5K msg |
+|------|---------|--------|--------|
+| AtMostOnce | ~100K msg/s | ~108K msg/s | ~180K msg/s |
+| AtLeastOnce | ~1.7K msg/s | ~14K msg/s | ~18K msg/s |
+| Mixed | ~1.7K msg/s | ~11K msg/s | ~13K msg/s |
+
+**AtMostOnce** is bounded by channel throughput and serialization — scales linearly.
+
+**AtLeastOnce** throughput improves with batch size thanks to batched claims and acks (single SQL round-trip per batch). The 100-message result is dominated by polling latency (~1s ReplayInterval), not throughput.
+
+**Mixed** mode is bounded by the durable path since AtMostOnce consumers add negligible overhead.
+
+### Design trade-offs
+
+- **Polling, not push**: the durable path polls PostgreSQL at `ReplayInterval` (default 1s). Consumers control the pace — no prefetch buffer overflow. The trade-off is latency: a message may wait up to 1s before being picked up.
+- **Batched claims and acks**: state transitions (Processing, Completed) are accumulated and flushed in batch before each poll cycle. This reduces DB round-trips from N to 1, at the cost of a short window (~1s) where a crash could cause re-delivery.
+- **In-flight deduplication**: prevents duplicate dispatch when messages are re-fetched before being acknowledged, with no delay penalty on new messages.
+- **No WAL**: the `DurableBuffer` holds messages in memory before flushing to the store. If the process crashes before a flush, those buffered messages are lost. The default `BufferFlushThreshold=1` (immediate flush) minimizes this window.
+- **AtLeastOnce consumers must be idempotent**: a message may be delivered more than once after a crash or timeout. This is a standard messaging contract, not specific to MsgFlux.
+
 ## Known limitations
 
-- **No WAL**: the `DurableBuffer` holds messages in memory before flushing to the store. If the process crashes before a flush, those messages are lost. For most workloads the default `BufferFlushThreshold=1` (immediate flush) minimizes this window.
 - **In-process only**: MsgFlux is not a distributed message broker. All producers and consumers run in the same process.
 - **Payload size**: messages are serialized with JSON + Brotli compression. Very large payloads should be stored externally with a reference in the message.
+- **Polling latency**: durable messages are not dispatched instantly — they wait for the next poll cycle (up to `ReplayInterval`).
 
 ## License
 
