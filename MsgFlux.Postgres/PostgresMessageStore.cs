@@ -20,9 +20,6 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
     public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
         => UpdateStateAsync(MessageState.Processing, messageId, consumerId, ct);
 
-    public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
-        => UpdateStateBatchAsync(MessageState.Processing, items, ct);
-
     public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
         => UpdateStateAsync(MessageState.Completed, messageId, consumerId, ct);
 
@@ -63,30 +60,49 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         string? messageType = null, int maxCount = 100,
         TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
     {
-        var paramIndex = 1;
-        var sql = """
-            SELECT message_id, consumer_id, payload, headers, message_type, state, retry_count, error_details, created_at, processed_at
-            FROM msgflux_messages
-            WHERE (state IN (0, 3)
-            """;
+        // Claim-on-fetch: the inner SELECT locks eligible rows with FOR UPDATE SKIP LOCKED and the
+        // outer UPDATE flips them to Processing in the SAME transaction before RETURNing them.
+        // Concurrent pollers — including separate instances scaled horizontally — therefore never
+        // receive the same row: it is claimed atomically the moment it is read.
+        //
+        // Note: processed_at (the stale-processing clock) starts at claim time, i.e. at fetch, not
+        // at dispatch. The caller bounds maxCount to its free capacity (MaxDOP - in-flight), so claimed
+        // rows are dispatched almost immediately and processed_at stays close to actual dispatch time;
+        // the stale clause then only fires for genuine crashes, not for queued-but-not-yet-dispatched
+        // work. Still size StaleProcessingTimeout above the longest expected handle duration.
+        //
+        // Parameters are numbered $1 = Processing state, $2 = now (processed_at); $3.. are appended
+        // in add-order below. The SET clause references $1/$2 even though it appears after the CTE.
+        var sb = new StringBuilder("""
+            WITH claimed AS (
+                SELECT message_id, consumer_id
+                FROM msgflux_messages
+                WHERE (state IN (0, 3)
+            """);
 
+        var idx = 3;
         if (staleProcessingTimeout.HasValue)
-        {
-            sql += $" OR (state = 1 AND processed_at < ${paramIndex})";
-            paramIndex++;
-        }
+            sb.Append(" OR (state = 1 AND processed_at < $").Append(idx++).Append(')');
 
-        sql += ")";
+        sb.Append(')');
 
         if (messageType != null)
-        {
-            sql += $" AND message_type = ${paramIndex}";
-            paramIndex++;
-        }
+            sb.Append(" AND message_type = $").Append(idx++);
 
-        sql += $" ORDER BY created_at ASC LIMIT ${paramIndex} FOR UPDATE SKIP LOCKED";
+        sb.Append(" ORDER BY created_at ASC LIMIT $").Append(idx)
+          .Append("""
+                 FOR UPDATE SKIP LOCKED
+            )
+            UPDATE msgflux_messages m
+            SET state = $1, processed_at = $2
+            FROM claimed c
+            WHERE m.message_id = c.message_id AND m.consumer_id = c.consumer_id
+            RETURNING m.message_id, m.consumer_id, m.payload, m.headers, m.message_type, m.state, m.retry_count, m.error_details, m.created_at, m.processed_at
+            """);
 
-        await using var cmd = dataSource.CreateCommand(sql);
+        await using var cmd = dataSource.CreateCommand(sb.ToString());
+        cmd.Parameters.AddWithValue((short)MessageState.Processing); // $1
+        cmd.Parameters.AddWithValue(clock.UtcNow);                   // $2
 
         if (staleProcessingTimeout.HasValue)
             cmd.Parameters.AddWithValue(clock.UtcNow - staleProcessingTimeout.Value);
@@ -120,17 +136,41 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         return results;
     }
 
+    /// <summary>
+    /// Advisory-lock key used to serialize purging across instances. Exposed so operators running
+    /// other pg_advisory_lock calls in the same database can avoid colliding with this key.
+    /// </summary>
+    public const long PurgeAdvisoryLockKey = 0x4D5347464C5558; // ASCII "MSGFLUX"
+
     public async Task<int> PurgeCompletedAsync(TimeSpan olderThan, CancellationToken ct = default)
     {
-        const string sql = """
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+
+        // With many instances each running their own purge timer, a single transaction-scoped
+        // advisory lock lets exactly one instance purge per cycle; the rest skip without blocking.
+        // pg_try_advisory_xact_lock is non-blocking and auto-releases on commit/rollback.
+        await using (var lockCmd = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock($1)", conn, tx))
+        {
+            lockCmd.Parameters.AddWithValue(PurgeAdvisoryLockKey);
+            var acquired = (bool)(await lockCmd.ExecuteScalarAsync(ct))!;
+            if (!acquired)
+            {
+                await tx.RollbackAsync(ct);
+                return 0;
+            }
+        }
+
+        await using var cmd = new NpgsqlCommand("""
             DELETE FROM msgflux_messages
             WHERE state = $1 AND created_at < $2
-            """;
-
-        await using var cmd = dataSource.CreateCommand(sql);
+            """, conn, tx);
         cmd.Parameters.AddWithValue((short)MessageState.Completed);
         cmd.Parameters.AddWithValue(clock.UtcNow - olderThan);
-        return await cmd.ExecuteNonQueryAsync(ct);
+        var deleted = await cmd.ExecuteNonQueryAsync(ct);
+
+        await tx.CommitAsync(ct);
+        return deleted;
     }
 
     private async Task UpdateStateAsync(MessageState state, Guid messageId, string consumerId, CancellationToken ct)

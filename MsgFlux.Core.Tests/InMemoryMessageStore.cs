@@ -30,12 +30,6 @@ public class InMemoryMessageStore : IMessageStore
         return Task.CompletedTask;
     }
 
-    public async Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
-    {
-        foreach (var (messageId, consumerId) in items)
-            await MarkAsProcessingAsync(messageId, consumerId, ct);
-    }
-
     public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
     {
         var key = (messageId, consumerId);
@@ -81,8 +75,10 @@ public class InMemoryMessageStore : IMessageStore
         string? messageType = null, int maxCount = 100,
         TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
     {
+        // Claim-on-fetch: mirror the real store contract — eligible rows are atomically flipped
+        // to Processing and returned in that state, so a fetched row is not handed out again.
         var now = DateTimeOffset.UtcNow;
-        var results = Messages.Values
+        var candidates = Messages.Values
             .Where(m =>
                 m.State == MessageState.Pending ||
                 m.State == MessageState.Failed ||
@@ -92,6 +88,14 @@ public class InMemoryMessageStore : IMessageStore
             .OrderBy(m => m.CreatedAt)
             .Take(maxCount)
             .ToList();
+
+        var results = new List<Message>(candidates.Count);
+        foreach (var m in candidates)
+        {
+            var claimed = m with { State = MessageState.Processing, ProcessedAt = now };
+            Messages[(m.MessageId, m.ConsumerId)] = claimed;
+            results.Add(claimed);
+        }
 
         return Task.FromResult<IReadOnlyList<Message>>(results);
     }
@@ -116,9 +120,6 @@ public class FailingMessageStore : IMessageStore
         => throw new InvalidOperationException("Store unavailable");
 
     public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
-        => throw new InvalidOperationException("Store unavailable");
-
-    public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
         => throw new InvalidOperationException("Store unavailable");
 
     public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)

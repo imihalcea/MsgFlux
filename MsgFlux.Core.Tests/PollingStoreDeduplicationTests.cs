@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Abstractions;
+using MsgFlux.Core.Configuration;
 
 namespace MsgFlux.Core.Tests;
 
@@ -150,63 +151,6 @@ public class PollingStoreDeduplicationTests
 
         Assert.That(yieldCount, Is.GreaterThanOrEqualTo(2),
             "Message was not re-yielded after OnDeadLetter cleared in-flight tracking");
-    }
-
-    [Test]
-    public async Task Should_Clear_InFlight_When_Batch_Claim_Fails()
-    {
-        // Arrange — store that fails on MarkAsProcessingBatchAsync
-        var store = new FailMarkAsProcessingStore();
-        var options = new MsgFluxOptions()
-            .WithReplayInterval(TimeSpan.FromMilliseconds(30))
-            .WithMaxDeadLetterRetries(10);
-
-        var source = new PollingStoreSource(store, options, NullLogger<PollingStoreSource>.Instance);
-
-        await store.PersistAsync([SeedMessage()]);
-
-        // Act — consume for 300ms. OnProcessing enqueues the claim, but the
-        // batch flush fails at the next poll cycle. The flush error handler
-        // clears _inFlight, allowing the message to be re-yielded.
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-        var yieldCount = 0;
-        try
-        {
-            await foreach (var item in source.StreamAsync(cts.Token))
-            {
-                yieldCount++;
-                await item.OnProcessing!(CancellationToken.None);
-            }
-        }
-        catch (OperationCanceledException) { }
-
-        // Assert — message should be re-yielded after batch claim failure cleared in-flight.
-        Assert.That(yieldCount, Is.GreaterThanOrEqualTo(2),
-            $"Message was yielded only {yieldCount} time(s) — stuck in in-flight set after batch claim failure");
-    }
-
-    private class FailMarkAsProcessingStore : IMessageStore
-    {
-        private readonly InMemoryMessageStore _inner = new();
-        public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
-            => _inner.PersistAsync(messages, ct);
-        public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
-            => throw new InvalidOperationException("DB connection lost");
-        public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
-            => throw new InvalidOperationException("DB connection lost");
-        public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
-            => _inner.AcknowledgeAsync(messageId, consumerId, ct);
-        public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
-            => _inner.AcknowledgeBatchAsync(items, ct);
-        public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
-            => _inner.MarkAsFailedAsync(messageId, consumerId, errorDetails, ct);
-        public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
-            => _inner.DeadLetterAsync(messageId, consumerId, reason, ct);
-        public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(string? messageType = null, int maxCount = 100,
-            TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
-            => _inner.FetchUnprocessedAsync(messageType, maxCount, staleProcessingTimeout, ct);
-        public Task<int> PurgeCompletedAsync(TimeSpan olderThan, CancellationToken ct = default)
-            => _inner.PurgeCompletedAsync(olderThan, ct);
     }
 
     private static Message SeedMessage(Guid? id = null) => new()

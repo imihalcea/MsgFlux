@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Abstractions;
+using MsgFlux.Core.Configuration;
 
 namespace MsgFlux.Core.Tests;
 
@@ -91,8 +92,6 @@ public class DurableBufferTests
 
         public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.MarkAsProcessingAsync(messageId, consumerId, ct);
-        public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
-            => _inner.MarkAsProcessingBatchAsync(items, ct);
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
         public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
@@ -131,8 +130,6 @@ public class DurableBufferTests
         public async Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
             => await Task.Delay(TimeSpan.FromSeconds(5), ct);
         public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
-            => Task.CompletedTask;
-        public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
             => Task.CompletedTask;
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => Task.CompletedTask;

@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using MsgFlux.Abstractions;
 
-namespace MsgFlux.Core;
+namespace MsgFlux.Core.Configuration;
 
 public class MsgFluxOptions
 {
@@ -13,7 +13,6 @@ public class MsgFluxOptions
     public TimeSpan PurgeOlderThan { get; set; } = TimeSpan.FromHours(4);
     public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromHours(1);
     public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(1);
-    public int PollingBatchSize { get; set; } = 500;
     public TimeSpan BufferFlushInterval { get; set; } = TimeSpan.Zero;
     public int BufferFlushThreshold { get; set; } = 1;
     public int MaxRetryAttempts { get; set; } = 3;
@@ -28,7 +27,6 @@ public class MsgFluxOptions
     public MsgFluxOptions WithPurge(TimeSpan olderThan, TimeSpan interval) { PurgeOlderThan = olderThan; PurgeInterval = interval; return this; }
     public MsgFluxOptions WithReplayInterval(TimeSpan interval) { ReplayInterval = interval; return this; }
     public MsgFluxOptions WithMaxDeadLetterRetries(int retries) { MaxDeadLetterRetries = retries; return this; }
-    public MsgFluxOptions WithPollingBatchSize(int batchSize) { PollingBatchSize = batchSize; return this; }
     public MsgFluxOptions WithRetry(int maxAttempts, TimeSpan delay) { MaxRetryAttempts = maxAttempts; RetryDelay = delay; return this; }
     public MsgFluxOptions WithBufferedPublishing(TimeSpan flushInterval, int flushThreshold = 50)
     {
