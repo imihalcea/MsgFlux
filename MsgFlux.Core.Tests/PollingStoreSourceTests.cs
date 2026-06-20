@@ -49,6 +49,10 @@ public class PollingStoreSourceTests
         var store = new FetchCountingStore();
         var options = new MsgFluxOptions()
             .WithReplayInterval(TimeSpan.FromMilliseconds(50))
+            // Pin MaxDOP > 1 so the single in-flight message never exhausts the fetch capacity
+            // (capacity = MaxDOP - in-flight) regardless of the host core count; this test asserts
+            // the store is polled repeatedly while one message stays in-flight.
+            .WithMaxDegreeOfParallelism(4)
             .WithMaxDeadLetterRetries(100);
 
         var source = new PollingStoreSource(store, options, NullLogger<PollingStoreSource>.Instance);

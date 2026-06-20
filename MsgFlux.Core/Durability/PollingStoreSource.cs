@@ -23,17 +23,38 @@ public sealed partial class PollingStoreSource(
     {
         var pollInterval = options.ReplayInterval;
         var batchSize = options.PollingBatchSize;
+        var maxDop = options.MaxDegreeOfParallelism > 0
+            ? options.MaxDegreeOfParallelism
+            : Environment.ProcessorCount;
 
         while (!ct.IsCancellationRequested)
         {
             await FlushPendingAcksAsync(ct);
+
+            // Claim only what we can dispatch right now. FetchUnprocessedAsync claims rows on fetch
+            // (state -> Processing, processed_at = now), so reserving a whole PollingBatchSize up front
+            // stamps tail rows long before they reach a free slot — they pass StaleProcessingTimeout
+            // while still queued and another instance re-claims them. Bounding the claim to the free
+            // capacity (MaxDOP - local in-flight) keeps processed_at close to actual dispatch time, so
+            // the stale clause only ever fires for genuine crashes.
+            //
+            // Note: _inFlight counts only this durable source's in-flight work, while the engine's
+            // throttle is shared with the in-memory (AtMostOnce) source. Under heavy mixed load this
+            // can slightly over-claim (slots taken by in-memory work); the precise fix is to have the
+            // source observe the shared semaphore, a larger redesign left for later.
+            var capacity = maxDop - _inFlight.Count;
+            if (capacity <= 0)
+            {
+                await SafeDelay(TimeSpan.FromMilliseconds(50), ct);
+                continue;
+            }
 
             IReadOnlyList<Message> batch;
             try
             {
                 batch = await store.FetchUnprocessedAsync(
                     messageType: null,
-                    maxCount: batchSize,
+                    maxCount: Math.Min(batchSize, capacity),
                     staleProcessingTimeout: options.StaleProcessingTimeout,
                     ct: ct);
             }
