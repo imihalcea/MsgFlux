@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using MsgFlux.Abstractions;
+using MsgFlux.Core.Configuration;
 using NUnit.Framework;
 
 namespace MsgFlux.Core.Tests;

@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using MsgFlux.Abstractions;
 
-namespace MsgFlux.Core;
+namespace MsgFlux.Core.Configuration;
 
 public class MsgFluxOptions
 {

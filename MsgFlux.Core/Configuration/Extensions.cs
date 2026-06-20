@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MsgFlux.Abstractions;
+using MsgFlux.Core.Configuration;
 using MsgFlux.Core.Serialization;
 
 namespace MsgFlux.Core;

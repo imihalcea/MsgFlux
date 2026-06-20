@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Abstractions;
+using MsgFlux.Core.Configuration;
 
 namespace MsgFlux.Core.Tests;
 

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using MsgFlux.Abstractions;
+using MsgFlux.Core.Configuration;
 
 namespace MsgFlux.Core;
 

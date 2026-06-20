@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Abstractions;
+using MsgFlux.Core.Configuration;
 using MsgFlux.Core.Serialization;
 
 namespace MsgFlux.Core.Tests;
