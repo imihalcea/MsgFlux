@@ -134,17 +134,41 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         return results;
     }
 
+    /// <summary>
+    /// Advisory-lock key used to serialize purging across instances. Exposed so operators running
+    /// other pg_advisory_lock calls in the same database can avoid colliding with this key.
+    /// </summary>
+    public const long PurgeAdvisoryLockKey = 0x4D5347464C5558; // ASCII "MSGFLUX"
+
     public async Task<int> PurgeCompletedAsync(TimeSpan olderThan, CancellationToken ct = default)
     {
-        const string sql = """
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+
+        // With many instances each running their own purge timer, a single transaction-scoped
+        // advisory lock lets exactly one instance purge per cycle; the rest skip without blocking.
+        // pg_try_advisory_xact_lock is non-blocking and auto-releases on commit/rollback.
+        await using (var lockCmd = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock($1)", conn, tx))
+        {
+            lockCmd.Parameters.AddWithValue(PurgeAdvisoryLockKey);
+            var acquired = (bool)(await lockCmd.ExecuteScalarAsync(ct))!;
+            if (!acquired)
+            {
+                await tx.RollbackAsync(ct);
+                return 0;
+            }
+        }
+
+        await using var cmd = new NpgsqlCommand("""
             DELETE FROM msgflux_messages
             WHERE state = $1 AND created_at < $2
-            """;
-
-        await using var cmd = dataSource.CreateCommand(sql);
+            """, conn, tx);
         cmd.Parameters.AddWithValue((short)MessageState.Completed);
         cmd.Parameters.AddWithValue(clock.UtcNow - olderThan);
-        return await cmd.ExecuteNonQueryAsync(ct);
+        var deleted = await cmd.ExecuteNonQueryAsync(ct);
+
+        await tx.CommitAsync(ct);
+        return deleted;
     }
 
     private async Task UpdateStateAsync(MessageState state, Guid messageId, string consumerId, CancellationToken ct)

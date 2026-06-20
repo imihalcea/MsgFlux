@@ -1,4 +1,5 @@
 using MsgFlux.Abstractions;
+using Npgsql;
 
 namespace MsgFlux.Postgres.Tests;
 
@@ -310,6 +311,33 @@ public class PostgresMessageStoreTests
 
         var purged = await _store.PurgeCompletedAsync(TimeSpan.FromHours(1));
         Assert.That(purged, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task PurgeCompletedAsync_Should_Skip_When_Another_Instance_Holds_The_Lock()
+    {
+        var msg = CreateMessage(createdAt: _clock.UtcNow);
+        await PersistOne(msg);
+        await _store.AcknowledgeAsync(msg.MessageId, msg.ConsumerId);
+        _clock.Advance(TimeSpan.FromHours(2));
+
+        // Simulate another instance currently purging by holding the advisory lock in an open tx.
+        await using var holder = await PostgresFixture.DataSource.OpenConnectionAsync();
+        await using var tx = await holder.BeginTransactionAsync();
+        await using (var lockCmd = new NpgsqlCommand("SELECT pg_advisory_xact_lock($1)", holder, tx))
+        {
+            lockCmd.Parameters.AddWithValue(PostgresMessageStore.PurgeAdvisoryLockKey);
+            await lockCmd.ExecuteNonQueryAsync();
+        }
+
+        // Lock contended -> purge skips this cycle, nothing deleted.
+        var purgedWhileLocked = await _store.PurgeCompletedAsync(TimeSpan.FromHours(1));
+        Assert.That(purgedWhileLocked, Is.EqualTo(0));
+
+        // Releasing the lock lets a subsequent purge proceed.
+        await tx.RollbackAsync();
+        var purgedAfterRelease = await _store.PurgeCompletedAsync(TimeSpan.FromHours(1));
+        Assert.That(purgedAfterRelease, Is.EqualTo(1));
     }
 
     [Test]
