@@ -20,9 +20,6 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
     public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
         => UpdateStateAsync(MessageState.Processing, messageId, consumerId, ct);
 
-    public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
-        => UpdateStateBatchAsync(MessageState.Processing, items, ct);
-
     public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
         => UpdateStateAsync(MessageState.Completed, messageId, consumerId, ct);
 

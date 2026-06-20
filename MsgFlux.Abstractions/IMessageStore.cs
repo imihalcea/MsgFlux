@@ -8,7 +8,6 @@ public interface IMessageStore
     Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default);
 
     Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default);
-    Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default);
     Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default);
     Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default);
     Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default);

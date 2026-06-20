@@ -89,8 +89,6 @@ public class PollingStoreSourceTests
             => _inner.PersistAsync(messages, ct);
         public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.MarkAsProcessingAsync(messageId, consumerId, ct);
-        public Task MarkAsProcessingBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
-            => _inner.MarkAsProcessingBatchAsync(items, ct);
         public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
             => _inner.AcknowledgeAsync(messageId, consumerId, ct);
         public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
