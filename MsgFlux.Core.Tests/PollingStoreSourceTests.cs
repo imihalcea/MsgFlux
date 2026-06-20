@@ -84,6 +84,52 @@ public class PollingStoreSourceTests
         Assert.That(store.FetchCount, Is.GreaterThan(1), "Store should have been polled multiple times");
     }
 
+    [Test]
+    public async Task SingleSlot_Claims_Only_One_Row_While_It_Is_InFlight()
+    {
+        // Capacity-gating proof on a single slot (MaxDOP = 1, independent of host core count):
+        // FetchUnprocessedAsync claims rows on fetch, so without bounding the claim to free capacity
+        // the source would flip ALL pending rows to Processing on the first poll, and the queued ones
+        // would age toward StaleProcessingTimeout before ever being dispatched. With capacity-gating,
+        // while the single slot is occupied (one message in-flight, never acked) NO further row is
+        // claimed — the rest stay Pending until the slot frees.
+        var store = new InMemoryMessageStore();
+        var options = new MsgFluxOptions()
+            .WithReplayInterval(TimeSpan.FromMilliseconds(30))
+            .WithMaxDegreeOfParallelism(1)
+            .WithMaxDeadLetterRetries(100);
+
+        var source = new PollingStoreSource(store, options, NullLogger<PollingStoreSource>.Instance);
+
+        await store.PersistAsync(Enumerable.Range(0, 3).Select(_ => new Message
+        {
+            MessageId = Guid.NewGuid(),
+            ConsumerId = "consumer-1",
+            Payload = [0x01],
+            Headers = new Dictionary<string, string>(),
+            MessageType = "Test",
+            State = MessageState.Pending,
+            CreatedAt = DateTimeOffset.UtcNow
+        }).ToList());
+
+        // Consume across several poll cycles, holding the first item in-flight (never ack/fail).
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        var yieldCount = 0;
+        try
+        {
+            await foreach (var _ in source.StreamAsync(cts.Token))
+                yieldCount++;
+        }
+        catch (OperationCanceledException) { }
+
+        var processing = store.Messages.Values.Count(m => m.State == MessageState.Processing);
+        var pending = store.Messages.Values.Count(m => m.State == MessageState.Pending);
+
+        Assert.That(yieldCount, Is.EqualTo(1), "only one row should be dispatched while the single slot is busy");
+        Assert.That(processing, Is.EqualTo(1), "only the in-flight row should be claimed");
+        Assert.That(pending, Is.EqualTo(2), "remaining rows must NOT be claimed beyond available capacity");
+    }
+
     private class FetchCountingStore : IMessageStore
     {
         private readonly InMemoryMessageStore _inner = new();
