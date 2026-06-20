@@ -23,7 +23,6 @@ public sealed partial class PollingStoreSource(
     public async IAsyncEnumerable<DispatchItem> StreamAsync([EnumeratorCancellation] CancellationToken ct)
     {
         var pollInterval = options.ReplayInterval;
-        var batchSize = options.PollingBatchSize;
         var maxDop = options.MaxDegreeOfParallelism > 0
             ? options.MaxDegreeOfParallelism
             : Environment.ProcessorCount;
@@ -33,8 +32,8 @@ public sealed partial class PollingStoreSource(
             await FlushPendingAcksAsync(ct);
 
             // Claim only what we can dispatch right now. FetchUnprocessedAsync claims rows on fetch
-            // (state -> Processing, processed_at = now), so reserving a whole PollingBatchSize up front
-            // stamps tail rows long before they reach a free slot — they pass StaleProcessingTimeout
+            // (state -> Processing, processed_at = now), so reserving more rows than there are free
+            // slots stamps the surplus long before they reach one — they pass StaleProcessingTimeout
             // while still queued and another instance re-claims them. Bounding the claim to the free
             // capacity (MaxDOP - local in-flight) keeps processed_at close to actual dispatch time, so
             // the stale clause only ever fires for genuine crashes.
@@ -55,7 +54,7 @@ public sealed partial class PollingStoreSource(
             {
                 batch = await store.FetchUnprocessedAsync(
                     messageType: null,
-                    maxCount: Math.Min(batchSize, capacity),
+                    maxCount: capacity,
                     staleProcessingTimeout: options.StaleProcessingTimeout,
                     ct: ct);
             }

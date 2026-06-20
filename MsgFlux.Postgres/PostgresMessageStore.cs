@@ -66,8 +66,10 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         // receive the same row: it is claimed atomically the moment it is read.
         //
         // Note: processed_at (the stale-processing clock) starts at claim time, i.e. at fetch, not
-        // at dispatch. Size StaleProcessingTimeout above the time the engine needs to drain one
-        // batch (PollingBatchSize) so a queued-but-not-yet-dispatched message is not re-claimed.
+        // at dispatch. The caller bounds maxCount to its free capacity (MaxDOP - in-flight), so claimed
+        // rows are dispatched almost immediately and processed_at stays close to actual dispatch time;
+        // the stale clause then only fires for genuine crashes, not for queued-but-not-yet-dispatched
+        // work. Still size StaleProcessingTimeout above the longest expected handle duration.
         //
         // Parameters are numbered $1 = Processing state, $2 = now (processed_at); $3.. are appended
         // in add-order below. The SET clause references $1/$2 even though it appears after the CTE.
