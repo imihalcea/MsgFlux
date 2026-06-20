@@ -63,30 +63,47 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         string? messageType = null, int maxCount = 100,
         TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
     {
-        var paramIndex = 1;
-        var sql = """
-            SELECT message_id, consumer_id, payload, headers, message_type, state, retry_count, error_details, created_at, processed_at
-            FROM msgflux_messages
-            WHERE (state IN (0, 3)
-            """;
+        // Claim-on-fetch: the inner SELECT locks eligible rows with FOR UPDATE SKIP LOCKED and the
+        // outer UPDATE flips them to Processing in the SAME transaction before RETURNing them.
+        // Concurrent pollers — including separate instances scaled horizontally — therefore never
+        // receive the same row: it is claimed atomically the moment it is read.
+        //
+        // Note: processed_at (the stale-processing clock) starts at claim time, i.e. at fetch, not
+        // at dispatch. Size StaleProcessingTimeout above the time the engine needs to drain one
+        // batch (PollingBatchSize) so a queued-but-not-yet-dispatched message is not re-claimed.
+        //
+        // Parameters are numbered $1 = Processing state, $2 = now (processed_at); $3.. are appended
+        // in add-order below. The SET clause references $1/$2 even though it appears after the CTE.
+        var sb = new StringBuilder("""
+            WITH claimed AS (
+                SELECT message_id, consumer_id
+                FROM msgflux_messages
+                WHERE (state IN (0, 3)
+            """);
 
+        var idx = 3;
         if (staleProcessingTimeout.HasValue)
-        {
-            sql += $" OR (state = 1 AND processed_at < ${paramIndex})";
-            paramIndex++;
-        }
+            sb.Append(" OR (state = 1 AND processed_at < $").Append(idx++).Append(')');
 
-        sql += ")";
+        sb.Append(')');
 
         if (messageType != null)
-        {
-            sql += $" AND message_type = ${paramIndex}";
-            paramIndex++;
-        }
+            sb.Append(" AND message_type = $").Append(idx++);
 
-        sql += $" ORDER BY created_at ASC LIMIT ${paramIndex} FOR UPDATE SKIP LOCKED";
+        sb.Append(" ORDER BY created_at ASC LIMIT $").Append(idx)
+          .Append("""
+                 FOR UPDATE SKIP LOCKED
+            )
+            UPDATE msgflux_messages m
+            SET state = $1, processed_at = $2
+            FROM claimed c
+            WHERE m.message_id = c.message_id AND m.consumer_id = c.consumer_id
+            RETURNING m.message_id, m.consumer_id, m.payload, m.headers, m.message_type, m.state, m.retry_count, m.error_details, m.created_at, m.processed_at
+            """);
 
-        await using var cmd = dataSource.CreateCommand(sql);
+        await using var cmd = dataSource.CreateCommand(sb.ToString());
+        cmd.Parameters.AddWithValue((short)MessageState.Processing); // $1
+        cmd.Parameters.AddWithValue(clock.UtcNow);                   // $2
 
         if (staleProcessingTimeout.HasValue)
             cmd.Parameters.AddWithValue(clock.UtcNow - staleProcessingTimeout.Value);

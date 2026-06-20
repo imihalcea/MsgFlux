@@ -171,9 +171,11 @@ public class PostgresMessageStoreTests
         await _store.MarkAsFailedAsync(msg.MessageId, msg.ConsumerId, "boom");
         await _store.MarkAsFailedAsync(msg.MessageId, msg.ConsumerId, "boom again");
 
+        // A Failed message is re-eligible for fetch; claim-on-fetch returns it now in Processing
+        // state, with retry_count and error_details preserved from the failures.
         var fetched = await _store.FetchUnprocessedAsync(maxCount: 10);
         Assert.That(fetched, Has.Count.EqualTo(1));
-        Assert.That(fetched[0].State, Is.EqualTo(MessageState.Failed));
+        Assert.That(fetched[0].State, Is.EqualTo(MessageState.Processing));
         Assert.That(fetched[0].RetryCount, Is.EqualTo(2));
         Assert.That(fetched[0].ErrorDetails, Is.EqualTo("boom again"));
     }
@@ -204,12 +206,14 @@ public class PostgresMessageStoreTests
         await PersistOne(failed);
         await _store.MarkAsFailedAsync(failed.MessageId, failed.ConsumerId, "err");
 
+        // Both Pending and Failed rows are eligible; claim-on-fetch returns and claims them together.
         var fetched = await _store.FetchUnprocessedAsync(maxCount: 10);
         Assert.That(fetched, Has.Count.EqualTo(2));
 
-        var states = fetched.Select(m => m.State).ToHashSet();
-        Assert.That(states, Does.Contain(MessageState.Pending));
-        Assert.That(states, Does.Contain(MessageState.Failed));
+        var fetchedIds = fetched.Select(m => m.MessageId).ToHashSet();
+        Assert.That(fetchedIds, Does.Contain(pending.MessageId));
+        Assert.That(fetchedIds, Does.Contain(failed.MessageId));
+        Assert.That(fetched.Select(m => m.State), Is.All.EqualTo(MessageState.Processing));
     }
 
     [Test]

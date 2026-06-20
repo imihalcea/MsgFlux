@@ -81,8 +81,10 @@ public class InMemoryMessageStore : IMessageStore
         string? messageType = null, int maxCount = 100,
         TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
     {
+        // Claim-on-fetch: mirror the real store contract — eligible rows are atomically flipped
+        // to Processing and returned in that state, so a fetched row is not handed out again.
         var now = DateTimeOffset.UtcNow;
-        var results = Messages.Values
+        var candidates = Messages.Values
             .Where(m =>
                 m.State == MessageState.Pending ||
                 m.State == MessageState.Failed ||
@@ -92,6 +94,14 @@ public class InMemoryMessageStore : IMessageStore
             .OrderBy(m => m.CreatedAt)
             .Take(maxCount)
             .ToList();
+
+        var results = new List<Message>(candidates.Count);
+        foreach (var m in candidates)
+        {
+            var claimed = m with { State = MessageState.Processing, ProcessedAt = now };
+            Messages[(m.MessageId, m.ConsumerId)] = claimed;
+            results.Add(claimed);
+        }
 
         return Task.FromResult<IReadOnlyList<Message>>(results);
     }
