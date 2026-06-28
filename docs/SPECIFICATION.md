@@ -120,7 +120,7 @@ Quand un producer planifie un message pour une date de livraison (`deliver-at`) 
 | Purge older-than / interval | Rétention des messages `Completed` | 4 h / 1 h |
 | Replay interval | Cadence de polling et de replay | 1 s |
 | Scheduling check interval | Cadence de vérification des messages planifiés dus (borne la précision de livraison) | 1 s |
-| Scheduled purge older-than / interval | Rétention des messages planifiés livrés / annulés | 4 h / 1 h |
+| Scheduled purge | Rétention des messages planifiés livrés / annulés ; réutilise *Purge older-than / interval* | 4 h / 1 h |
 
 ---
 

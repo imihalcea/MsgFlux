@@ -6,6 +6,7 @@ Lightweight in-process messaging library for .NET 10. Decoupled async communicat
 
 - **Pub/Sub** with typed messages and consumers (`IConsume<T>`)
 - **Per-consumer delivery semantics**: `AtMostOnce` (in-memory, fire-and-forget) or `AtLeastOnce` (durable, persisted to a store)
+- **Scheduled delivery**: publish a message for delivery at a future date via `ISchedule` (durable, cancellable)
 - **Resilience**: configurable Polly retry with exponential backoff
 - **Observability**: OpenTelemetry distributed tracing (`ActivitySource "MsgFlux"`)
 - **Backpressure**: bounded channels with producer-side backpressure
@@ -136,6 +137,38 @@ builder.Services.AddMsgFlux(options =>
 });
 ```
 
+## Scheduled (deferred) delivery
+
+Publish a message for delivery at a precise future date instead of immediately. Inject `ISchedule`:
+
+```csharp
+public class ReminderController(ISchedule scheduler) : ControllerBase
+{
+    [HttpPost]
+    public async Task<IActionResult> Schedule([FromBody] SetReminder req)
+    {
+        Guid id = await scheduler.ScheduleAsync(
+            new ReminderDue(req.UserId, req.Text),
+            req.When);                                  // DateTimeOffset
+
+        return Accepted(new { scheduledId = id });      // keep the id to cancel later
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Cancel(Guid id)
+        => await scheduler.CancelScheduledAsync(id) ? NoContent() : NotFound();
+}
+```
+
+Scheduling is **durable-only**: it requires a store and at least one `AtLeastOnce` consumer for the message type (otherwise `ScheduleAsync` throws). A scheduled message is persisted to a dedicated `scheduled_messages` table — separate from the hot-path messages — and survives restarts while it waits. At its due date a background **promoter** moves it into the normal delivery path, where it follows the usual at-least-once lifecycle (retry, dead-letter, recovery).
+
+- **Returned id**: `ScheduleAsync` returns the message id, used for cancellation.
+- **Cancellation** is best-effort: it succeeds while the message is still pending; once the due date has passed and the message has entered delivery, `CancelScheduledAsync` returns `false` and the message is delivered.
+- **Precision** is bounded by `PromotionInterval` (default 1s) plus the poll cycle — delivery is at-or-after the due date, not real-time. A past date delivers as soon as possible.
+- **Fan-out** happens at the due date, to all `AtLeastOnce` consumers of the type.
+
+Scheduling is enabled automatically when a provider supplies the schedule store (the PostgreSQL provider registers it in `AddMsgFluxPostgres`). Without one, `ISchedule` is not registered.
+
 ## Configuration
 
 All options have sensible defaults. Override via the fluent API:
@@ -177,8 +210,9 @@ builder.Services.AddMsgFlux(options =>
 | `BufferFlushThreshold` | 1 | Flush durable buffer when this many messages accumulate (1 = immediate) |
 | `BufferFlushInterval` | 0 | Periodic flush interval (0 = only flush on threshold) |
 | `MaxBufferedMessages` | 1000 | Max durable messages awaiting persistence; publish applies backpressure when reached |
-| `PurgeOlderThan` | 4 hours | Purge completed messages older than this |
+| `PurgeOlderThan` | 4 hours | Purge completed messages (and promoted/cancelled scheduled rows) older than this |
 | `PurgeInterval` | 1 hour | How often the purge service runs |
+| `PromotionInterval` | 1s | How often due scheduled messages are promoted into the delivery path |
 
 ## Resilience
 
@@ -231,6 +265,8 @@ MsgFlux.Postgres       (Npgsql)  -- optional
 
 - **EngineService** -- `BackgroundService` that consumes from all `IMessageSource`s, acquires a global semaphore slot, and dispatches to the matching `IConsume<T>` consumer
 - **Publisher** -- serializes messages (JSON + Brotli), routes to `DurableBuffer` or `InMemoryMessageSource` based on consumer semantics
+- **Scheduler** -- persists deferred messages to a dedicated `IScheduleStore` (content held as an opaque blob); fan-out is deferred to the promoter
+- **SchedulePromoter** -- `BackgroundService` that moves due scheduled messages into the hot path (`IMessageStore`) at their due date, idempotently
 - **DurableBuffer** -- batches durable writes and flushes to `IMessageStore`; restores batch on failure
 - **InMemoryMessageSource** -- bounded `Channel<Message>` for AtMostOnce consumers
 - **PollingStoreSource** -- polls `IMessageStore` for unprocessed messages, deduplicates in-flight items, defers claim to dispatch time
