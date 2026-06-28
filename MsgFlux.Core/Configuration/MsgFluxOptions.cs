@@ -15,6 +15,7 @@ public class MsgFluxOptions
     public TimeSpan ReplayInterval { get; set; } = TimeSpan.FromSeconds(1);
     public TimeSpan BufferFlushInterval { get; set; } = TimeSpan.Zero;
     public int BufferFlushThreshold { get; set; } = 1;
+    public int MaxBufferedMessages { get; set; } = 1000;
     public int MaxRetryAttempts { get; set; } = 3;
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromMilliseconds(200);
 
@@ -34,6 +35,13 @@ public class MsgFluxOptions
         BufferFlushThreshold = flushThreshold;
         return this;
     }
+
+    /// <summary>
+    /// Caps the number of durable messages awaiting persistence. Once reached, <c>PublishAsync</c>
+    /// applies backpressure (waits) instead of buffering unbounded in memory. Bounds memory and
+    /// aligns the producer with the store's real throughput.
+    /// </summary>
+    public MsgFluxOptions WithMaxBufferedMessages(int max) { MaxBufferedMessages = max; return this; }
 
     /// <summary>
     /// Registers a consumer with an explicit delivery semantic. AtMostOnce (default) uses the

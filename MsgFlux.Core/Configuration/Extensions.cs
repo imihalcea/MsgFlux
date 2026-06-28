@@ -33,6 +33,9 @@ public static class Extensions
         services.AddSingleton<IMessageSource>(sp => sp.GetRequiredService<InMemoryMessageSource>());
 
         services.AddSingleton<DurableBuffer>();
+        // Same instance as a hosted service so its final flush runs during the host's ordered
+        // shutdown, while the store is still alive (rather than relying on container disposal order).
+        services.AddHostedService(sp => sp.GetRequiredService<DurableBuffer>());
         services.AddSingleton<IPublish, Publisher>();
         services.AddSingleton<IMessageSource>(sp =>
         {
