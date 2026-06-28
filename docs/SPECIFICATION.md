@@ -33,6 +33,9 @@ Choisie **par consumer** à l'enregistrement :
 ### 2.4 Message states
 `Pending` → `Processing` → `Completed` (succès, terminal). Une erreur mène à `Failed` (rejouable), et l'épuisement des retries mène à `DeadLettered` (terminal, abandonné).
 
+### 2.5 Scheduled delivery
+Au lieu d'être livré immédiatement, un message peut être **planifié** pour une date/heure précise (`deliver-at`). Il reste en attente jusqu'à son échéance, puis rejoint le cycle de vie normal comme s'il venait d'être publié. Un message planifié est **annulable** tant qu'il n'a pas atteint son échéance.
+
 ---
 
 ## 3. Exigences fonctionnelles
@@ -84,6 +87,20 @@ Quand un producer publie un payload :
 - **EF-O2** — Le **trace context est propagé** du producer vers le consumer (à travers le store le cas échéant), reconstituant la chaîne end-to-end selon le standard W3C Trace Context.
 - **EF-O3** — Les erreurs et timeouts sont marqués en error status sur le span de consume.
 
+### 3.9 Scheduling (livraison différée)
+Quand un producer planifie un message pour une date de livraison (`deliver-at`) :
+
+- **EF-SC1** — Le producer peut **planifier** la livraison d'un message à une date/heure précise plutôt que de le livrer immédiatement.
+- **EF-SC2** — La planification **retourne un identifiant** (le message ID) permettant l'annulation ultérieure.
+- **EF-SC3** — **Durabilité requise** : la planification exige un chemin durable. Planifier **sans store**, ou pour un message type dont **aucun** consumer n'est at-least-once, **échoue avec une erreur explicite** (rien n'est planifié). Justification : un message différé doit survivre aux crashes pendant son attente.
+- **EF-SC4** — **Survie en attente** : un message planifié est **persisté dès la planification** et survit aux redémarrages / crashes durant toute l'attente jusqu'à son échéance.
+- **EF-SC5** — **Précision de livraison** : la livraison intervient **à l'échéance ou peu après** ; la latence haute est bornée par la cadence de vérification configurable. Le système **n'offre pas de précision temps réel**.
+- **EF-SC6** — **Date passée** : une `deliver-at` dans le passé est **acceptée** et entraîne une livraison dès que possible (au prochain cycle de vérification).
+- **EF-SC7** — **Fuseau horaire** : la date est interprétée et conservée en **UTC**.
+- **EF-SC8** — **Fan-out planifié** : comme au publish, un message planifié pour un type à N consumers (at-least-once) produit **N deliveries indépendantes** à l'échéance.
+- **EF-SC9** — **Bascule vers le cycle normal** : à l'échéance, le message rejoint le cycle de vie **at-least-once standard** (delivery, retries, dead-letter, recovery, observabilité) et devient indistinguable d'un message publié à cet instant. Les exigences EF-C*, EF-R*, EF-D* et EF-O* s'appliquent **dès l'échéance**.
+- **EF-SC10** — **Annulation** : un message planifié peut être **annulé avant sa livraison** via son identifiant (toutes les copies fan-out encore en attente). L'annulation est **best-effort** : si le message a déjà atteint son échéance et est entré dans le pipeline de livraison, l'annulation est **sans effet** et le message sera livré. L'opération **indique** si elle a effectivement empêché la livraison.
+
 ---
 
 ## 4. Configuration (comportements paramétrables)
@@ -102,6 +119,8 @@ Quand un producer publie un payload :
 | Stale processing timeout | Avant de considérer un message comme abandonné | 5 min |
 | Purge older-than / interval | Rétention des messages `Completed` | 4 h / 1 h |
 | Replay interval | Cadence de polling et de replay | 1 s |
+| Scheduling check interval | Cadence de vérification des messages planifiés dus (borne la précision de livraison) | 1 s |
+| Scheduled purge older-than / interval | Rétention des messages planifiés livrés / annulés | 4 h / 1 h |
 
 ---
 
@@ -115,6 +134,7 @@ Quand un producer publie un payload :
 - **EF-E1** — Le store durable est **pluggable** : tout provider respectant le contrat (persist, mark-as-processing, acknowledge, mark-as-failed, dead-letter, fetch-unprocessed, purge) peut être substitué.
 - **EF-E2** — Un provider PostgreSQL est livré en standard ; l'utilisateur peut en fournir un autre (autre SGBD, ajout de chiffrement, politique de rétention propre, etc.).
 - **EF-E3** — Le contrat du store impose l'**unicité** par couple (message ID, consumer ID) et une **claim atomique** des messages à traiter (pas de double-prise entre instances concurrentes).
+- **EF-E4** — Le **stockage des messages planifiés est pluggable** au même titre que le store durable, et **distinct** de celui-ci : un message planifié n'entre dans le pipeline de livraison qu'à son échéance, sans coupler le chemin de delivery au scheduling.
 
 ---
 
@@ -123,3 +143,4 @@ Quand un producer publie un payload :
 - En at-most-once, **aucune** garantie n'est offerte (perte possible au moindre incident), aucune persistance n'est mobilisée.
 - En at-least-once, des **doublons** de delivery sont possibles après recovery (le consumer doit être idempotent).
 - L'intégrité/confidentialité du payload n'est pas assurée par la bibliothèque (pas de signing ni d'encryption intégrés).
+- Le scheduling offre une livraison **différée ponctuelle** (un message = une livraison) : pas de **récurrence** ni de planification de type cron, et pas de précision **temps réel** (la latence est bornée par la cadence de vérification).
