@@ -45,7 +45,9 @@ Quand un producer publie un payload :
 - **EF-P3** — Une **copie logique distincte** du message est destinée à **chaque** consumer enregistré (modèle fan-out : N consumers → N deliveries indépendantes).
 - **EF-P4** — Chaque copie reçoit un message ID unique et stable, le consumer ID cible, et le trace context courant.
 - **EF-P5** — **Atomicité du routing** : les copies destinées aux consumers at-least-once sont prises en charge **avant** celles at-most-once. Si la prise en charge durable échoue, **aucune** copie in-memory n'est enqueuée (pas de partial delivery) et l'erreur remonte au producer.
-- **EF-P6** — **Backpressure** : si la file in-memory est saturée, le publish **attend** qu'un slot se libère plutôt que de perdre ou rejeter le message.
+- **EF-P6** — **Backpressure in-memory** : si la file in-memory est saturée, le publish **attend** qu'un slot se libère plutôt que de perdre ou rejeter le message.
+- **EF-P7** — **Durabilité au publish (group-commit)** : pour les copies at-least-once, le publish ne se termine qu'**après** la persistance effective dans le store. Le producer n'est jamais acquitté avant l'écriture durable ; il n'existe pas de fenêtre où un message « accepté » ne serait qu'en mémoire. Les publishes concurrents sont coalescés en un seul batch (le débit du batching est conservé) sans introduire de fenêtre de perte. Si la persistance échoue, l'erreur **remonte au producer** (qui republie) ; aucun retry interne silencieux.
+- **EF-P8** — **Backpressure durable bornée** : le nombre de messages durables en attente de persistance est plafonné (`Max buffered messages`). Au-delà, le publish **attend** qu'une place se libère — la mémoire est bornée et le producer s'aligne sur le débit réel du store, plutôt que d'accumuler sans limite.
 
 ### 3.2 Consume et cycle de vie
 - **EF-C1** — Le système délivre chaque message à son consumer cible en invoquant son handler avec le payload désérialisé.
@@ -71,7 +73,7 @@ Quand un producer publie un payload :
 
 ### 3.6 Graceful shutdown
 - **EF-S1** — À l'arrêt de l'application, le système **attend la fin** de tous les handlers in-flight avant de s'arrêter (pas de message orphelin).
-- **EF-S2** — Les states et acks en attente sont flushés et persistés avant l'arrêt complet.
+- **EF-S2** — Les states et acks en attente sont flushés et persistés avant l'arrêt complet. Le buffer de publication durable effectue son flush final pendant la phase d'arrêt ordonnée du host, **tant que le store est encore disponible** (pas de dépendance à l'ordre de disposal).
 - **EF-S3** — Les message sources sont closes (plus aucun nouveau message accepté).
 
 ### 3.7 Maintenance / rétention
@@ -95,6 +97,7 @@ Quand un producer publie un payload :
 | Retry delay | Délai de base du backoff exponentiel entre tentatives | 200 ms |
 | Max dead-letter retries | Seuil de mise en dead-letter (durable) | 3 |
 | Buffer flush threshold / interval | Batching des writes durables au publish | 1 / immédiat |
+| Max buffered messages | Plafond de messages durables en attente de persistance (backpressure au publish) | 1000 |
 | Polling batch size | Volume relu par cycle de recovery | 500 |
 | Stale processing timeout | Avant de considérer un message comme abandonné | 5 min |
 | Purge older-than / interval | Rétention des messages `Completed` | 4 h / 1 h |
