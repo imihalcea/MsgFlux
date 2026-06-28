@@ -21,7 +21,7 @@ public class DurableBufferTests
     public async Task SetUp()
     {
         BufferTracker.Reset();
-        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("DELETE FROM msgflux_messages");
+        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("DELETE FROM msgflux.messages");
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -151,14 +151,14 @@ public class DurableBufferTests
 
     private static async Task<long> CountRows()
     {
-        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("SELECT COUNT(*) FROM msgflux_messages");
+        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("SELECT COUNT(*) FROM msgflux.messages");
         return (long)(await cmd.ExecuteScalarAsync())!;
     }
 
     private static async Task<long> CountByState(MessageState state)
     {
         await using var cmd = PostgresContainerFixture.DataSource.CreateCommand(
-            "SELECT COUNT(*) FROM msgflux_messages WHERE state = $1");
+            "SELECT COUNT(*) FROM msgflux.messages WHERE state = $1");
         cmd.Parameters.AddWithValue((int)state);
         return (long)(await cmd.ExecuteScalarAsync())!;
     }

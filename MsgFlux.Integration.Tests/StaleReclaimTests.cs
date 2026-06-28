@@ -40,7 +40,7 @@ public class StaleReclaimTests
     [SetUp]
     public async Task SetUp()
     {
-        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("DELETE FROM msgflux_messages");
+        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("DELETE FROM msgflux.messages");
         await cmd.ExecuteNonQueryAsync();
     }
 
