@@ -42,7 +42,7 @@ public class DurablePublisherTests
     }
 
     [Test]
-    public async Task DurablePublisher_Should_Buffer_When_Store_Fails()
+    public async Task DurablePublisher_Propagates_Store_Failure_To_Caller()
     {
         // Arrange — store that always fails
         var store = new FailingMessageStore();
@@ -62,13 +62,15 @@ public class DurablePublisherTests
         var hostedService = provider.GetServices<IHostedService>().OfType<EngineService>().First();
         await hostedService.StartAsync(CancellationToken.None);
 
-        // Act — publish does not throw; the buffer absorbs the store failure
+        // Act — group-commit (A1): the store failure surfaces to the caller instead of being
+        // silently buffered, so the publisher knows the message was NOT durably persisted.
         var publisher = provider.GetRequiredService<IPublish>();
-        await publisher.PublishAsync(new DurableTestMessage { Content = "Buffered" });
+        Assert.ThrowsAsync<InvalidOperationException>(
+            () => publisher.PublishAsync(new DurableTestMessage { Content = "Buffered" }));
 
         await Task.Delay(100);
 
-        // Assert — handler never called (messages stuck in buffer, never persisted)
+        // Assert — nothing was persisted, so the handler is never called.
         Assert.That(DurableTestHandler.HandledCount, Is.EqualTo(0));
 
         await hostedService.StopAsync(CancellationToken.None);

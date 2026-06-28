@@ -29,7 +29,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
     public async Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
     {
         const string sql = """
-            UPDATE msgflux_messages SET state = $1, error_details = $2, retry_count = retry_count + 1
+            UPDATE msgflux.messages SET state = $1, error_details = $2, retry_count = retry_count + 1
             WHERE message_id = $3 AND consumer_id = $4
             """;
 
@@ -44,7 +44,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
     public async Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
     {
         const string sql = """
-            UPDATE msgflux_messages SET state = $1, error_details = $2
+            UPDATE msgflux.messages SET state = $1, error_details = $2
             WHERE message_id = $3 AND consumer_id = $4
             """;
 
@@ -76,7 +76,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         var sb = new StringBuilder("""
             WITH claimed AS (
                 SELECT message_id, consumer_id
-                FROM msgflux_messages
+                FROM msgflux.messages
                 WHERE (state IN (0, 3)
             """);
 
@@ -93,7 +93,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
           .Append("""
                  FOR UPDATE SKIP LOCKED
             )
-            UPDATE msgflux_messages m
+            UPDATE msgflux.messages m
             SET state = $1, processed_at = $2
             FROM claimed c
             WHERE m.message_id = c.message_id AND m.consumer_id = c.consumer_id
@@ -162,7 +162,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         }
 
         await using var cmd = new NpgsqlCommand("""
-            DELETE FROM msgflux_messages
+            DELETE FROM msgflux.messages
             WHERE state = $1 AND created_at < $2
             """, conn, tx);
         cmd.Parameters.AddWithValue((short)MessageState.Completed);
@@ -176,7 +176,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
     private async Task UpdateStateAsync(MessageState state, Guid messageId, string consumerId, CancellationToken ct)
     {
         const string sql = """
-            UPDATE msgflux_messages SET state = $1, processed_at = $2
+            UPDATE msgflux.messages SET state = $1, processed_at = $2
             WHERE message_id = $3 AND consumer_id = $4
             """;
 
@@ -193,7 +193,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         if (items.Count == 0) return;
 
         const string sql = """
-            UPDATE msgflux_messages SET state = $1, processed_at = $2
+            UPDATE msgflux.messages SET state = $1, processed_at = $2
             WHERE (message_id, consumer_id) IN (SELECT unnest($3), unnest($4))
             """;
 
@@ -208,7 +208,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
     private async Task PersistSmallBatchAsync(IReadOnlyList<Message> messages, CancellationToken ct)
     {
         var sb = new StringBuilder(
-            "INSERT INTO msgflux_messages (message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at) VALUES ");
+            "INSERT INTO msgflux.messages (message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at) VALUES ");
 
         await using var cmd = dataSource.CreateCommand();
         var p = 1;
@@ -278,7 +278,7 @@ public class PostgresMessageStore(NpgsqlDataSource dataSource, IClock clock, Pos
         await writer.CloseAsync(ct);
 
         await using var merge = new NpgsqlCommand("""
-            INSERT INTO msgflux_messages (message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at)
+            INSERT INTO msgflux.messages (message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at)
             SELECT message_id, consumer_id, payload, headers, message_type, state, retry_count, created_at
             FROM _msgflux_bulk
             ON CONFLICT (message_id, consumer_id) DO NOTHING

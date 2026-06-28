@@ -21,7 +21,7 @@
 ## Phase 3 : MsgFlux.Postgres
 
 - [ ] **T13** Créer le projet `MsgFlux.Postgres/MsgFlux.Postgres.csproj` (ref Abstractions + Npgsql 9.0.*)
-- [ ] **T14** Créer `MsgFlux.Postgres/schema.sql` (DDL table msgflux_messages + index)
+- [ ] **T14** Définir le DDL (schéma `msgflux` + table `msgflux.messages` + index) dans `SchemaInitializer`
 - [ ] **T15** Créer `MsgFlux.Postgres/PostgresOptions.cs` (AutoCreateSchema = true par défaut)
 - [ ] **T16** Créer `MsgFlux.Postgres/PostgresMessageStore.cs` : implémentation IMessageStore avec NpgsqlDataSource, SELECT FOR UPDATE SKIP LOCKED
 - [ ] **T17** Créer `MsgFlux.Postgres/SchemaInitializer.cs` : BackgroundService qui exécute le DDL au démarrage

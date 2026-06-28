@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsgFlux.Abstractions;
 using MsgFlux.Core.Configuration;
@@ -28,15 +29,81 @@ public class DurableBufferTests
             flushInterval: TimeSpan.FromMilliseconds(50), flushThreshold: 100);
         await using var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
 
-        await buffer.AddAsync(MakeMessages(2));
+        var add = buffer.AddAsync(MakeMessages(2));
 
-        // Not yet flushed (threshold=100)
+        // Below threshold: nothing flushed synchronously.
         Assert.That(store.Messages, Has.Count.EqualTo(0));
 
-        // Wait for timer flush
-        await Task.Delay(200);
-
+        // The timer flush completes the publish.
+        await add;
         Assert.That(store.Messages, Has.Count.EqualTo(2));
+    }
+
+    [Test]
+    public async Task AddAsync_Completes_Only_After_Persist()
+    {
+        // Group-commit: the publisher is not acknowledged until the write reaches the store.
+        var store = new GatedPersistStore();
+        var options = new MsgFluxOptions().WithBufferedPublishing(
+            flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 1);
+        await using var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
+
+        var add = buffer.AddAsync(MakeMessages(1));
+        await WaitUntil(() => Volatile.Read(ref store.PersistCalls) == 1);
+
+        Assert.That(add.IsCompleted, Is.False);          // persist in flight, not yet acked
+        Assert.That(store.Messages, Has.Count.EqualTo(0));
+
+        store.Open();
+        await add;
+        Assert.That(store.Messages, Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public async Task Concurrent_Adds_During_Flush_Are_Coalesced()
+    {
+        // While one flush is in flight, concurrent publishes accumulate into a single next batch.
+        var store = new GatedPersistStore();
+        var options = new MsgFluxOptions().WithBufferedPublishing(
+            flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 1);
+        await using var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
+
+        var first = buffer.AddAsync(MakeMessages(1));    // triggers flush #1, blocks in PersistAsync
+        await WaitUntil(() => Volatile.Read(ref store.PersistCalls) == 1);
+
+        var rest = Task.WhenAll(
+            buffer.AddAsync(MakeMessages(1)),
+            buffer.AddAsync(MakeMessages(1)),
+            buffer.AddAsync(MakeMessages(1)));           // accumulate into batch #2
+
+        store.Open();
+        await first;
+        await rest;
+
+        Assert.That(store.Messages, Has.Count.EqualTo(4));
+        Assert.That(store.PersistCalls, Is.EqualTo(2));  // 4 messages coalesced into 2 persist calls
+    }
+
+    [Test]
+    public async Task AddAsync_Applies_Backpressure_When_Capacity_Reached()
+    {
+        var store = new GatedPersistStore();
+        var options = new MsgFluxOptions()
+            .WithBufferedPublishing(flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 1)
+            .WithMaxBufferedMessages(2);
+        await using var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
+
+        var first = buffer.AddAsync(MakeMessages(2));    // fills capacity (2); flush blocks in PersistAsync
+        await WaitUntil(() => Volatile.Read(ref store.PersistCalls) == 1);
+
+        var blocked = buffer.AddAsync(MakeMessages(1));  // no free slot → must wait on capacity
+        await Task.Delay(50);
+        Assert.That(blocked.IsCompleted, Is.False);
+
+        store.Open();                                    // releases first → frees capacity → blocked proceeds
+        await first;
+        await blocked;
+        Assert.That(store.Messages, Has.Count.EqualTo(3));
     }
 
     [Test]
@@ -47,47 +114,62 @@ public class DurableBufferTests
             flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 100);
         var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
 
-        await buffer.AddAsync(MakeMessages(5));
+        var add = buffer.AddAsync(MakeMessages(5));      // below threshold; not flushed yet
+        await Task.Delay(50);
+        Assert.That(add.IsCompleted, Is.False);
         Assert.That(store.Messages, Has.Count.EqualTo(0));
 
-        await buffer.DisposeAsync();
+        await buffer.DisposeAsync();                     // final flush during shutdown
+        await add;
         Assert.That(store.Messages, Has.Count.EqualTo(5));
     }
 
     [Test]
-    public async Task Should_Restore_Buffer_When_Flush_Fails()
+    public async Task AddAsync_Propagates_Persist_Failure_To_Caller()
     {
-        // Arrange — store that fails on first PersistAsync, then succeeds
-        var store = new FailOncePersistStore();
+        // A1: no silent internal retry — the store error surfaces so the caller can republish.
+        var store = new FailingMessageStore();
         var options = new MsgFluxOptions().WithBufferedPublishing(
-            flushInterval: TimeSpan.FromMilliseconds(50), flushThreshold: 3);
+            flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 3);
         await using var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
 
-        // Act — add 3 messages, triggering a threshold flush that will fail
-        await buffer.AddAsync(MakeMessages(3));
-
-        // Assert — store has nothing (persist failed), but messages should NOT be lost
-        Assert.That(store.Messages, Has.Count.EqualTo(0));
-
-        // Act — wait for the timer flush (store succeeds this time)
-        await Task.Delay(200);
-
-        // Assert — all 3 messages recovered and persisted on retry
-        Assert.That(store.Messages, Has.Count.EqualTo(3));
+        Assert.ThrowsAsync<InvalidOperationException>(() => buffer.AddAsync(MakeMessages(3)));
     }
 
-    private class FailOncePersistStore : IMessageStore
+    [Test]
+    public void AddAsync_Should_Honor_CancellationToken()
+    {
+        var store = new InMemoryMessageStore();
+        var options = new MsgFluxOptions().WithBufferedPublishing(
+            flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 1);
+        using var cts = new CancellationTokenSource();
+
+        var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
+
+        cts.Cancel();
+
+        Assert.ThrowsAsync<OperationCanceledException>(
+            () => buffer.AddAsync(MakeMessages(1), cts.Token));
+    }
+
+    /// <summary>
+    /// Store whose first PersistAsync blocks until <see cref="Open"/> is called, counting calls.
+    /// Lets a test hold a flush in flight to observe group-commit and backpressure.
+    /// </summary>
+    private class GatedPersistStore : IMessageStore
     {
         private readonly InMemoryMessageStore _inner = new();
-        private int _callCount;
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int PersistCalls;
 
         public ConcurrentDictionary<(Guid, string), Message> Messages => _inner.Messages;
+        public void Open() => _gate.TrySetResult();
 
-        public Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
+        public async Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
         {
-            if (Interlocked.Increment(ref _callCount) == 1)
-                throw new InvalidOperationException("DB unavailable");
-            return _inner.PersistAsync(messages, ct);
+            if (Interlocked.Increment(ref PersistCalls) == 1)
+                await _gate.Task;
+            await _inner.PersistAsync(messages, ct);
         }
 
         public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
@@ -107,47 +189,19 @@ public class DurableBufferTests
             => _inner.PurgeCompletedAsync(olderThan, ct);
     }
 
-    [Test]
-    public void AddAsync_Should_Honor_CancellationToken()
+    private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 2000)
     {
-        var store = new SlowPersistStore();
-        var options = new MsgFluxOptions().WithBufferedPublishing(
-            flushInterval: TimeSpan.FromSeconds(30), flushThreshold: 1);
-        using var cts = new CancellationTokenSource();
-
-        var buffer = new DurableBuffer(options, NullLogger<DurableBuffer>.Instance, store);
-
-        // Cancel immediately
-        cts.Cancel();
-
-        // AddAsync should throw OperationCanceledException since the token is already cancelled
-        Assert.ThrowsAsync<OperationCanceledException>(
-            () => buffer.AddAsync(MakeMessages(1), cts.Token));
-    }
-
-    private class SlowPersistStore : IMessageStore
-    {
-        public async Task PersistAsync(IReadOnlyList<Message> messages, CancellationToken ct = default)
-            => await Task.Delay(TimeSpan.FromSeconds(5), ct);
-        public Task MarkAsProcessingAsync(Guid messageId, string consumerId, CancellationToken ct = default)
-            => Task.CompletedTask;
-        public Task AcknowledgeAsync(Guid messageId, string consumerId, CancellationToken ct = default)
-            => Task.CompletedTask;
-        public Task AcknowledgeBatchAsync(IReadOnlyList<(Guid MessageId, string ConsumerId)> items, CancellationToken ct = default)
-            => Task.CompletedTask;
-        public Task MarkAsFailedAsync(Guid messageId, string consumerId, string errorDetails, CancellationToken ct = default)
-            => Task.CompletedTask;
-        public Task DeadLetterAsync(Guid messageId, string consumerId, string reason, CancellationToken ct = default)
-            => Task.CompletedTask;
-        public Task<IReadOnlyList<Message>> FetchUnprocessedAsync(string? messageType = null, int maxCount = 100,
-            TimeSpan? staleProcessingTimeout = null, CancellationToken ct = default)
-            => Task.FromResult<IReadOnlyList<Message>>([]);
-        public Task<int> PurgeCompletedAsync(TimeSpan olderThan, CancellationToken ct = default)
-            => Task.FromResult(0);
+        var sw = Stopwatch.StartNew();
+        while (!condition())
+        {
+            if (sw.ElapsedMilliseconds > timeoutMs)
+                Assert.Fail("Condition was not met within the timeout.");
+            await Task.Delay(10);
+        }
     }
 
     private static List<Message> MakeMessages(int count) =>
-        Enumerable.Range(0, count).Select(i => new Message
+        Enumerable.Range(0, count).Select(_ => new Message
         {
             MessageId = Guid.NewGuid(),
             ConsumerId = "test-consumer",

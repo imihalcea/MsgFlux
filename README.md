@@ -103,7 +103,7 @@ builder.Services.AddMsgFluxPostgres("...", opts => opts.AutoCreateSchema = false
 
 ### How durable delivery works
 
-1. **Publish**: messages are buffered and flushed to the store in batch (configurable threshold/interval)
+1. **Publish**: messages are buffered and flushed to the store in batch (configurable threshold/interval); the publish completes only once its batch is durably persisted (group-commit), and concurrent publishes are coalesced into one batch
 2. **Poll**: a background loop fetches unprocessed messages every `ReplayInterval` (default 1s) and dispatches them to consumers
 3. **Claim**: each message is marked `Processing` just before consumer invocation (deferred to minimize stale-timeout risk)
 4. **Ack**: successful completions are batched and flushed to the store in a single round-trip at the next poll cycle
@@ -151,10 +151,10 @@ builder.Services.AddMsgFlux(options =>
         .WithMaxPayloadSizeKb(128)
         .WithChannelCapacity(5000)
         .WithReplayInterval(TimeSpan.FromSeconds(10))
-        .WithPollingBatchSize(100)
         .WithBufferedPublishing(
             flushInterval: TimeSpan.FromMilliseconds(100),
             flushThreshold: 50)
+        .WithMaxBufferedMessages(2000)
         .WithPurge(
             olderThan: TimeSpan.FromDays(3),
             interval: TimeSpan.FromMinutes(30))
@@ -174,9 +174,9 @@ builder.Services.AddMsgFlux(options =>
 | `MaxPayloadSizeKb` | 64 | Publish rejects payloads larger than this |
 | `ChannelCapacity` | 1000 | Bounded channel size for AtMostOnce consumers |
 | `ReplayInterval` | 1s | Polling interval for durable message replay and ack flush |
-| `PollingBatchSize` | 500 | Max messages fetched per poll cycle |
 | `BufferFlushThreshold` | 1 | Flush durable buffer when this many messages accumulate (1 = immediate) |
 | `BufferFlushInterval` | 0 | Periodic flush interval (0 = only flush on threshold) |
+| `MaxBufferedMessages` | 1000 | Max durable messages awaiting persistence; publish applies backpressure when reached |
 | `PurgeOlderThan` | 4 hours | Purge completed messages older than this |
 | `PurgeInterval` | 1 hour | How often the purge service runs |
 
@@ -309,7 +309,7 @@ Impact of `MaxDegreeOfParallelism` on AtLeastOnce throughput (5K messages):
 - **Polling, not push**: the durable path polls PostgreSQL at `ReplayInterval` (default 1s). Consumers control the pace — no prefetch buffer overflow. The trade-off is latency: a message may wait up to 1s before being picked up.
 - **Batched claims and acks**: state transitions (Processing, Completed) are accumulated and flushed in batch before each poll cycle. This reduces DB round-trips from N to 1, at the cost of a short window (~1s) where a crash could cause re-delivery.
 - **In-flight deduplication**: prevents duplicate dispatch when messages are re-fetched before being acknowledged, with no delay penalty on new messages.
-- **No WAL**: the `DurableBuffer` holds messages in memory before flushing to the store. If the process crashes before a flush, those buffered messages are lost. The default `BufferFlushThreshold=1` (immediate flush) minimizes this window.
+- **Group-commit durability**: a durable (`AtLeastOnce`) publish completes only once its batch is committed to the store — the producer is never told a message is published while it is still only in memory, so an acknowledged message is not lost on a crash. Concurrent publishes are coalesced into a single batch, preserving batching throughput. The trade-off: the in-flight buffer is bounded (`MaxBufferedMessages`, default 1000) and, once full, publishing applies backpressure (the producer waits) rather than buffering unbounded; a flush failure surfaces to the caller to republish.
 - **AtLeastOnce consumers must be idempotent**: a message may be delivered more than once after a crash or timeout. This is a standard messaging contract, not specific to MsgFlux.
 
 ## Known limitations

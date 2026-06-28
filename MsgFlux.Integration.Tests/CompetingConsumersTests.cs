@@ -28,7 +28,7 @@ public class CompetingConsumersTests
     public async Task SetUp()
     {
         DeliveryTracker.Reset();
-        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("DELETE FROM msgflux_messages");
+        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("DELETE FROM msgflux.messages");
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -97,7 +97,7 @@ public class CompetingConsumersTests
 
     private static async Task<long> CountRows()
     {
-        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("SELECT COUNT(*) FROM msgflux_messages");
+        await using var cmd = PostgresContainerFixture.DataSource.CreateCommand("SELECT COUNT(*) FROM msgflux.messages");
         return (long)(await cmd.ExecuteScalarAsync())!;
     }
 }
