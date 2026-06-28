@@ -264,7 +264,9 @@ public class OrderCreatedHandler(IPublish publisher) : IConsume<OrderCreated>
 
 **Not a good fit:**
 
-- Cross-process or cross-service communication (use RabbitMQ, Kafka, or a cloud broker)
+- Interop with non-.NET systems, or services that don't share MsgFlux's contracts: MsgFlux ships a .NET-only API and routes by .NET type identity (`message_type` and `consumer_id` are .NET type names — `consumer_id` is a hash of the consumer's `FullName`). The on-disk format is open (payloads are plain Brotli + JSON in the shared database, nothing proprietary), so a non-.NET participant is *possible* in principle, but it would have to reimplement the claim protocol and the .NET type-name conventions by hand — there is no published cross-language client or contract. For polyglot messaging, use RabbitMQ, Kafka, or a cloud broker.
+- Dynamic topic routing or runtime subscriptions (consumers are registered statically at startup)
+- A standalone network broker: MsgFlux always coordinates through a shared database, never directly over the wire
 - Very high throughput durable messaging (>50K msg/s — use a dedicated broker)
 - Exactly-once delivery (MsgFlux provides at-least-once; consumers must be idempotent)
 - Long-term message retention or audit log (completed messages are purged after 4 hours by default)
@@ -314,7 +316,7 @@ Impact of `MaxDegreeOfParallelism` on AtLeastOnce throughput (5K messages):
 
 ## Known limitations
 
-- **In-process only**: MsgFlux is not a distributed message broker. All producers and consumers run in the same process.
+- **In-process by default, multi-process when durable**: the in-memory path (`AtMostOnce`) is strictly in-process — producer and consumer must live in the same process. The durable path (`AtLeastOnce`) does cross process boundaries: any participants that share the same store (PostgreSQL) **and** the same .NET contracts (message and consumer types — the `consumer_id` is a stable hash of the consumer's type name) compete for messages via `FOR UPDATE SKIP LOCKED` (competing consumers), so a message published by one process can be processed by another. This enables both horizontal scaling and genuine cross-service messaging between cooperating .NET services. It is *not* a general-purpose broker: routing is static (consumers fixed at startup, no dynamic topics) and every participant must agree on the shared store and contracts — a process that polls the store must be able to dispatch every consumer it may claim.
 - **Payload size**: very large payloads should be stored externally with a reference in the message.
 - **JSON serialization is intentional**: all messages are serialized with JSON + Brotli compression, even for the in-memory path. This is by design — it enforces that message types are serializable, making a future migration to an external broker (RabbitMQ, Kafka, etc.) seamless. No code change needed on the producer/consumer side.
 - **Polling latency**: durable messages are not dispatched instantly — they wait for the next poll cycle (up to `ReplayInterval`).

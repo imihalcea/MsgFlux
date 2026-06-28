@@ -4,7 +4,7 @@
 
 MsgFlux est une bibliothèque de messaging asynchrone **in-process** suivant un modèle **producer / consumer**. Elle permet à des composants d'une même application de communiquer par messages typés, de façon découplée, avec un choix de **delivery guarantee** par consumer.
 
-Ce n'est **pas** un message broker réseau : producers et consumers vivent dans le même process. La durabilité (survie aux crashes) repose sur un **store** de persistance externe optionnel.
+Ce n'est **pas** un message broker réseau autonome : MsgFlux n'expose pas de protocole réseau propre et coordonne toujours via le process hôte ou un **store** partagé. En **at-most-once**, producers et consumers vivent dans le même process. En **at-least-once**, dès lors que plusieurs process partagent le même **store** (et les mêmes contrats .NET), un message publié par un process peut être consommé par un autre (competing consumers) : le périmètre franchit alors les frontières de process. La durabilité (survie aux crashes) repose sur ce **store** de persistance externe optionnel.
 
 ---
 
