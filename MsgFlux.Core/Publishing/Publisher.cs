@@ -19,28 +19,13 @@ public sealed partial class Publisher(
     ILogger<Publisher> logger,
     DurableBuffer durableBuffer) : IPublish
 {
-    private static readonly ActivitySource ActivitySource = new("MsgFlux");
-
     public async Task PublishAsync<T>(T payload, CancellationToken ct = default)
     {
-        using var activity = ActivitySource.StartActivity(nameof(PublishAsync), ActivityKind.Producer);
+        using var activity = MessageContent.ActivitySource.StartActivity(nameof(PublishAsync), ActivityKind.Producer);
 
-        var headers = new Dictionary<string, string>();
-        if (activity != null)
-        {
-            headers["traceparent"] = activity.Id ?? string.Empty;
-            if (activity.TraceStateString != null)
-                headers["tracestate"] = activity.TraceStateString;
-        }
-
-        var payloadBytes = serializer.Serialize(payload);
+        var payloadBytes = MessageContent.SerializeValidated(serializer, options, payload);
+        var headers = MessageContent.CaptureTraceHeaders(activity);
         var messageType = typeof(T);
-
-        if (payloadBytes.Length > options.MaxPayloadSizeKb * 1024)
-        {
-            throw new InvalidOperationException(
-                $"Payload size {payloadBytes.Length} bytes for message {messageType.Name} exceeds the configured limit of {options.MaxPayloadSizeKb}KB.");
-        }
 
         var consumers = registry.GetConsumers(messageType);
         if (consumers.Count == 0)

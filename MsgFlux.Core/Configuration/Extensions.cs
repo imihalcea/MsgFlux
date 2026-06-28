@@ -45,6 +45,16 @@ public static class Extensions
                 sp.GetRequiredService<ILogger<PollingStoreSource>>());
         });
 
+        // Scheduling (deferred delivery): registered only when a dedicated schedule store is available.
+        // The Scheduler persists due-dated messages there; the SchedulePromoter fans them out into the
+        // hot path (IMessageStore) at their due date. Without a provider, ISchedule stays unregistered
+        // and injecting it fails with the usual DI error.
+        if (services.Any(d => d.ServiceType == typeof(IScheduleStore)))
+        {
+            services.AddSingleton<ISchedule, Scheduler>();
+            services.AddHostedService<SchedulePromoter>();
+        }
+
         services.AddHostedService<MessagePurgeService>();
         services.AddHostedService<EngineService>();
 
