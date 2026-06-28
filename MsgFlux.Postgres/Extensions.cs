@@ -21,6 +21,7 @@ public static class Extensions
 
         services.TryAddSingleton<IClock, SystemClock>();
         services.AddSingleton<IMessageStore, PostgresMessageStore>();
+        services.AddSingleton<IScheduleStore, PostgresScheduleStore>();
         services.AddHostedService<SchemaInitializer>();
 
         return services;

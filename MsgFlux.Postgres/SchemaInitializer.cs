@@ -31,6 +31,20 @@ public partial class SchemaInitializer(
             ON msgflux.messages (consumer_id, state, message_type, created_at) WHERE state IN (0, 1, 3);
         CREATE INDEX IF NOT EXISTS ix_msgflux_purge
             ON msgflux.messages (created_at) WHERE state = 2;
+
+        CREATE TABLE IF NOT EXISTS msgflux.scheduled_messages (
+            id            BIGSERIAL    PRIMARY KEY,
+            message_id    UUID         NOT NULL,
+            msg           BYTEA        NOT NULL,
+            message_type  TEXT         NOT NULL,
+            state         SMALLINT     NOT NULL DEFAULT 0,
+            deliver_at    TIMESTAMPTZ  NOT NULL,
+            created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+            UNIQUE (message_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_msgflux_scheduled_due
+            ON msgflux.scheduled_messages (deliver_at) WHERE state = 0;
         """;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
